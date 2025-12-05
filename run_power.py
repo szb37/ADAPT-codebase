@@ -6,11 +6,12 @@ import pandas as pd
 import itertools
 import os
 
+prefix='adapt'
 
 if True: ### Generate mock data
 
-    n_trials = 150
-    sample_size = 500
+    n_trials = 200
+    sample_size = 400
     dfs = []
     
     ### Ideal scenario: mean dose guesses are the same, SD/confidence is generously small/high 
@@ -26,7 +27,7 @@ if True: ### Generate mock data
         )
     dfs.append(df_trial)
 
-    # Optimistic scenario: mean dose guesses are 2mg apart, SD/confidence both moderate
+    # Optimistic scenario with mean dose guesses are 2mg apart, SD/confidence both moderate
     scenario = 'diff2mg'
     df_trial = power.DataGeneration.get_df_trials(
         scenario = scenario,
@@ -39,6 +40,7 @@ if True: ### Generate mock data
         )
     dfs.append(df_trial)
 
+    # Optimistic scenario with mean dose guesses are 4mg apart, SD/confidence both moderate
     scenario = 'diff4mg'
     df_trial = power.DataGeneration.get_df_trials(
         scenario = scenario,
@@ -53,31 +55,22 @@ if True: ### Generate mock data
 
     ### Concatanate and save 
     df_trials = pd.concat(dfs, ignore_index=True)
-    df_trials.to_csv(os.path.join(folders.power, f'adapt_trials.csv'), index=False)
-
-    # # POP scenario: according to pop data; NO NEED TO SIMULATE IT, THERE IS NO CHANCE WE CAN SHOW EQUIVALENCE
-    # adapt_trials_pop = power.DataGeneration.get_df_trials(
-    #     n_trials = n_trials, 
-    #     n_per_arm = n_per_arm, 
-    #     mean_C = 4.5, 
-    #     mean_T = 18,        
-    #     sd = 11,
-    #     confs = config.confs,
-    #     )
-    # adapt_trials_pop.to_csv(os.path.join(folders.power, 'adapt_trials_pop.csv'), index=False)
+    df_trials.to_csv(os.path.join(folders.power, f'{prefix}_trials.csv'), index=False)
 
 if True: ### Calculate CIs according to various methods - can take a while to run
 
-    df_stats = power.Power.get_df_stats(
-        df_trials = pd.read_csv(os.path.join(folders.power, 'adapt_trials.csv')),
-        sample_sizes = [80, 100, 120, 140, 160, 180, 200, 300, 400, 500],
+    df_stats = power.Stats.get_df_cis(
+        df_trials = pd.read_csv(os.path.join(folders.power, f'{prefix}_trials.csv')),
+        sample_sizes = [80, 100, 120, 140, 160, 180, 200, 240, 280, 320, 400],
+        #sample_sizes = [50],
         rope_cgr=0.14, 
         rope_bbi=0.2, 
-        rope_mix=5,)        
-    df_stats.to_csv(os.path.join(folders.power, 'adapt_stats.csv'), index=False)
+        rope_gmg=5,
+        rope_gmgc=5,)        
+    df_stats.to_csv(os.path.join(folders.power, f'{prefix}_stats.csv'), index=False)
 
 if True: ### Calc averages across scenarios / sample sizes 
 
     df_power = power.Power.get_df_power(
-        df_stats = pd.read_csv(os.path.join(folders.power, 'adapt_stats.csv')),)
-    df_power.to_csv(os.path.join(folders.power, f'adapt_power.csv'), index=False)
+        df_cis = pd.read_csv(os.path.join(folders.power, f'{prefix}_cis.csv')),)
+    df_power.to_csv(os.path.join(folders.power, f'{prefix}_power.csv'), index=False)
