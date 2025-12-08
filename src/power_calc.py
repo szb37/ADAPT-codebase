@@ -16,7 +16,7 @@ r('library(BI)')
 class DataGeneration():
 
     @staticmethod ### Generate mock trial data 
-    def get_df_trials(n_trials, sample_size, mean_C, mean_T, sd, confs, scenario='tmp'):
+    def get_df_trials(scenario, n_trials, sample_size, mean_C, mean_T, sd, thr_dose=config.thr_dose, confs=config.confs, conf_to_se=config.conf_to_se,):
 
         df_trials = pd.DataFrame()
         assert sample_size % 2==0, "sample_size must be even"
@@ -52,8 +52,8 @@ class DataGeneration():
             df_trials = pd.concat([df_trial, df_trials], ignore_index=True)
 
         ### Generate guess SD and binary guess
-        df_trials['guess_se'] = df_trials['guess_conf'].map(config.conf_to_se)
-        df_trials['guess_bin'] = df_trials['guess_dose'].apply(lambda x: 'T' if x >= config.thr_dose else 'C')
+        df_trials['guess_se'] = df_trials['guess_conf'].map(conf_to_se)
+        df_trials['guess_bin'] = df_trials['guess_dose'].apply(lambda x: 'T' if x >= thr_dose else 'C')
         
         df_trials = df_trials[['scenario', 'trial', 'pID', 'trt', 'guess_bin', 'guess_dose', 'guess_conf', 'guess_se']]
         return df_trials
@@ -295,7 +295,7 @@ class Stats():
         gmgc = mean_T - mean_C
         gmgc_ci_low = gmgc - (1.96*se_diff)
         gmgc_ci_high = gmgc + (1.96*se_diff)
-    
+
         return gmgc, gmgc_ci_low, gmgc_ci_high
 
 

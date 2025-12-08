@@ -20,7 +20,7 @@ err_kws={'capsize': 3, 'elinewidth': 0.65,'capthick': 0.65}
 ### Convert dose guess confidence to SD
 thr_dose = 10.5 # if the guessed dose is >= thr_dos, then binary guess is 'T', otherwise 'C'
 doseguess_x = np.linspace(0, 30, 500)
-conf_to_se = { #  np.linspace(2, 20, 7)/1.96
+conf_to_se = {# np.linspace(2, 20, 7)/1.96
     1: 5.102*2, 
     2: 4.337*2, 
     3: 3.571*2, 
@@ -29,9 +29,7 @@ conf_to_se = { #  np.linspace(2, 20, 7)/1.96
     6: 1.276*2, 
     7: 0.510*2}
 
-
-### Get distirbtuion of confidences from the POP data
-pop_master = pd.read_csv("C:\\Users\\szb37\\My Drive\\Projects\\POP\\codebase\\exports POP\\pop_master.csv")
+### Guess confidences from POP
 confs = [7.0,
  2.0,
  6.0,
