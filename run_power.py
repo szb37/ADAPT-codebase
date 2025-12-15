@@ -3,15 +3,15 @@ import src.power_calc as power
 import src.folders as folders
 import pandas as pd
 import os
-# import importlib
-# importlib.reload(core)
+import importlib
+importlib.reload(power)
 
 prefix='tmp'
 
 if True: ### Generate mock data
 
-    n_trials = 1
-    sample_size = 10000
+    n_trials = 5
+    sample_size = 100
     df_trialsData=[]
 
     scenario = 'tmp'
@@ -39,8 +39,8 @@ if True: ### Calculate CIs according to various methods - can take a while to ru
 
     df_trialsResults = power.Stats.get_df_trialsResults(
         df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
-        sample_sizes = [160, 80, 100, 120, 140, 160, 180, 200, 240, 280, 320, 400],
-        #sample_sizes = [50],
+        #sample_sizes = [160, 80, 100, 120, 140, 160, 180, 200, 240, 280, 320, 400],
+        sample_sizes = [20, 40, 60, 80, 100],
         rope_cgr=0.14, 
         rope_bbi=0.2, 
         rope_gmg=5,

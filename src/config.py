@@ -16,6 +16,10 @@ sns.set_style("darkgrid")
 errorbar='sd'
 err_kws={'capsize': 3, 'elinewidth': 0.65,'capthick': 0.65}
 
+### Misc configs
+digits=3 # Number of digits round CIs to
+#methods=['cgr', 'bbi', 'gmg', 'gmgc']
+methods=['cgr', 'gmg',]
 
 ### Convert dose guess confidence to SD
 thr_dose = 10.5 # if the guessed dose is >= thr_dos, then binary guess is 'T', otherwise 'C'
