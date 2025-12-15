@@ -1,4 +1,4 @@
-scenario,sample_size,cgr,cgr_ci_low,cgr_ci_high,cgr_moe,cgr_nsd,cgr_eqv,bbi_C,bbi_C_ci_low,bbi_C_ci_high,bbi_C_moe,bbi_C_nsd,bbi_C_eqv,bbi_T,bbi_T_ci_low,bbi_T_ci_high,bbi_T_moe,bbi_T_nsd,bbi_T_eqv,gmg,gmg_ci_low,gmg_ci_high,gmg_moe,gmg_nsd,gmg_eqv,gmgc,gmgc_ci_low,gmgc_ci_high,gmgc_moe,gmgc_nsd,gmgc_eqv
+scenario,sample_size,cgr,cgr_ciL,cgr_ciH,cgr_moe,cgr_nsd,cgr_eqv,bbi_C,bbi_C_ciL,bbi_C_ciH,bbi_C_moe,bbi_C_nsd,bbi_C_eqv,bbi_T,bbi_T_ciL,bbi_T_ciH,bbi_T_moe,bbi_T_nsd,bbi_T_eqv,gmg,gmg_ciL,gmg_ciH,gmg_moe,gmg_nsd,gmg_eqv,gmgc,gmgc_ciL,gmgc_ciH,gmgc_moe,gmgc_nsd,gmgc_eqv
 diff_0mg,60,0.504,0.373,0.635,0.131,0.98,0.08,0.004,-0.347,0.355,0.351,0.945,0.0,0.012,-0.34,0.365,0.352,0.97,0.0,-0.062,-3.93,3.805,3.867,0.945,0.47,-0.062,-2.556,2.431,2.494,0.81,0.825
 diff_0mg,80,0.504,0.39,0.617,0.113,0.975,0.465,0.008,-0.297,0.313,0.305,0.875,0.0,0.007,-0.299,0.314,0.306,0.935,0.0,-0.028,-3.384,3.329,3.357,0.96,0.71,-0.028,-2.19,2.135,2.162,0.815,0.89
 diff_0mg,100,0.503,0.402,0.604,0.101,0.975,0.485,0.001,-0.273,0.275,0.274,0.91,0.0,0.011,-0.264,0.285,0.275,0.95,0.0,-0.043,-3.035,2.949,2.992,0.94,0.78,-0.043,-1.976,1.89,1.933,0.78,0.95

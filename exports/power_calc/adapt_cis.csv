@@ -1,4 +1,4 @@
-scenario,trial,sample_size,cgr,cgr_ci_low,cgr_ci_high,cgr_nsd,cgr_eqv,bbi_C,bbi_C_ci_low,bbi_C_ci_high,bbi_C_nsd,bbi_C_eqv,bbi_T,bbi_T_ci_low,bbi_T_ci_high,bbi_T_nsd,bbi_T_eqv,gmg,gmg_ci_low,gmg_ci_high,gmg_nsd,gmg_eqv,gmgc,gmgc_ci_low,gmgc_ci_high,gmgc_nsd,gmgc_eqv
+scenario,trial,sample_size,cgr,cgr_ciL,cgr_ciH,cgr_nsd,cgr_eqv,bbi_C,bbi_C_ciL,bbi_C_ciH,bbi_C_nsd,bbi_C_eqv,bbi_T,bbi_T_ciL,bbi_T_ciH,bbi_T_nsd,bbi_T_eqv,gmg,gmg_ciL,gmg_ciH,gmg_nsd,gmg_eqv,gmgc,gmgc_ciL,gmgc_ciH,gmgc_nsd,gmgc_eqv
 diff_0mg,199,60,0.517,0.384,0.648,True,False,0.067,-0.29,0.424,True,False,0.0,-0.358,0.358,True,False,0.453,-3.629,4.535,True,True,0.453,-2.043,2.95,True,True
 diff_0mg,199,80,0.5,0.386,0.614,True,True,0.0,-0.31,0.31,True,False,0.0,-0.31,0.31,True,False,0.5,-3.045,4.045,True,True,0.5,-1.689,2.689,True,True
 diff_0mg,199,100,0.48,0.379,0.582,True,True,-0.08,-0.356,0.196,True,False,0.0,-0.277,0.277,True,False,-0.154,-3.191,2.883,True,True,-0.154,-2.122,1.814,True,True
