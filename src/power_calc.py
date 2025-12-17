@@ -6,6 +6,7 @@ from tqdm import tqdm
 import src.config as config
 import pandas as pd
 import numpy as np
+import math
 r('library(BI)')
 
 
@@ -28,7 +29,7 @@ class DataGeneration():
 
         ### Generate data per trial / arm
         df_trialsData = pd.DataFrame()
-        for trial in tqdm(range(0, n_trials), desc=f'Gen {scenario} trial data'):            
+        for trial in tqdm(range(0, n_trials), desc=f'Generate {scenario} data'):            
             df_trialData = pd.DataFrame()
 
             for arm in ['C', 'T']:
@@ -78,7 +79,7 @@ class DataGeneration():
             confusion['trtT_guessT'], ]
 
         df_trialsData = pd.DataFrame()
-        for trial in range(0, n_trials):
+        for trial in tqdm(range(0, n_trials), desc=f'Generate {scenario} data'):
             df_trialData = pd.DataFrame()
 
             ### Generate data
@@ -96,26 +97,33 @@ class DataGeneration():
             df_trialData['pID'] = df_trialData.index
             df_trialsData = pd.concat([df_trialData, df_trialsData], ignore_index=True)
         
-        df_trialsData = df_trialsData[['trial', 'pID', 'trt', 'guess_bin']]
+        df_trialsData = df_trialsData[['scenario', 'trial', 'pID', 'trt', 'guess_bin']]
         return df_trialsData
 
 
 class Stats():
 
     @staticmethod
-    def get_df_trialsResults(df_trialsData, sample_sizes, rope_cgr, rope_bbi, rope_gmg, rope_gmgc, methods=config.methods):
+    def get_df_CIs(df_trialsData, sample_sizes, methods=config.methods,):
 
-        df_CIs = []
+        dfs = []
         scenarios = df_trialsData.scenario.unique()
         trials = df_trialsData.trial.unique()
 
-        for scenario, trial, sample_size in tqdm(product(scenarios, trials, sample_sizes), desc='Calc df_trialsResults'):
+        for scenario, trial, sample_size in tqdm(product(scenarios, trials, sample_sizes), desc='Calc CIs'):
 
-            df_C = df_trialsData.loc[(df_trialsData.trial==trial) & (df_trialsData.trt=='C')].reset_index().iloc[0:round(sample_size/2), :]
-            df_T = df_trialsData.loc[(df_trialsData.trial==trial) & (df_trialsData.trt=='T')].reset_index().iloc[0:round(sample_size/2), :]
+            df_C = df_trialsData.loc[
+                (df_trialsData.scenario==scenario) & 
+                (df_trialsData.trial==trial) & 
+                (df_trialsData.trt=='C')].reset_index().iloc[0:round(sample_size/2), :]
+            df_T = df_trialsData.loc[
+                (df_trialsData.scenario==scenario) & 
+                (df_trialsData.trial==trial) & 
+                (df_trialsData.trt=='T')].reset_index().iloc[0:round(sample_size/2), :]
+            
             df_trialData = pd.concat([df_C, df_T], ignore_index=True).reset_index(drop=True)
 
-            df_CI = Stats.get_df_cis(
+            df_CI = Stats.calc_cis(
                 df_trialData = df_trialData,
                 methods = methods,)
 
@@ -123,27 +131,174 @@ class Stats():
             df_CI.insert(0, 'sample_size', sample_size) 
             df_CI.insert(0, 'trial', trial) 
             df_CI.insert(0, 'scenario', scenario)             
-            df_CIs.append(df_CI)
+            dfs.append(df_CI)
 
         ### Concat CIs
-        df_trialResults = pd.concat(df_CIs, ignore_index=True)
+        df_CIs = pd.concat(dfs, ignore_index=True)
+        return df_CIs
 
-        ### Add EQV and NSD decisions
-        df_trialResults = Stats.add_nsd(
-            df_CIs = df_trialResults,)
+    @staticmethod
+    def get_df_trialsResults(df_CIs, trim_CIs=True):
 
+        df_trialsResults = df_CIs.copy()
+
+        ### Add trial results 
         df_trialsResults = Stats.add_eqv(
-            df_CIs = df_trialResults,
-            rope_cgr = rope_cgr,
-            rope_bbi = rope_bbi, 
-            rope_gmg = rope_gmg,
-            rope_gmgc = rope_gmgc,)
+            df_CIs = df_trialsResults,)
+
+        df_trialsResults = Stats.add_nsd(
+            df_CIs = df_trialsResults,)
+
+        df_trialsResults = Stats.add_sd(
+            df_CIs = df_trialsResults,)
+
+        if trim_CIs:
+            rm_cols = [col for col in df_trialsResults.columns if (('_ciL' in col) | ('_ciH' in col))]
+            df_trialsResults = df_trialsResults.drop(columns=rm_cols)
             
         return df_trialsResults
 
     @staticmethod
-    def get_df_cis(df_trialData, digits=config.digits, methods=config.methods):
+    def add_sd(df_CIs):
+
+        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):            
+            pos = df_CIs.columns.get_loc('cgr_moe') + 1
+            df_CIs.insert(pos, 'cgr_sd', None) 
+            df_CIs['cgr_sd'] = (
+                (df_CIs['cgr_ciL'] >= 0.5) | (df_CIs['cgr_ciH'] <= 0.5))
+
+        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
+            df_CIs.insert(pos, 'bbi_C_sd', None) 
+            df_CIs['bbi_C_sd'] = (
+                (df_CIs['bbi_C_ciL'] >= 0) | (df_CIs['bbi_C_ciH'] <= 0))
+
+        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
+            df_CIs.insert(pos, 'bbi_T_sd', None) 
+            df_CIs['bbi_T_sd'] = (
+                (df_CIs['bbi_T_ciL'] >= 0) | (df_CIs['bbi_T_ciH'] <= 0))
+
+        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmg_moe') + 1
+            df_CIs.insert(pos, 'gmg_sd', None) 
+            df_CIs['gmg_sd'] = (
+                (df_CIs['gmg_ciL'] >= 0) | (df_CIs['gmg_ciH'] <= 0))    
+
+        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
+            df_CIs.insert(pos, 'gmgc_sd', None) 
+            df_CIs['gmgc_sd'] = (
+                (df_CIs['gmgc_ciL'] >= 0) | (df_CIs['gmgc_ciH'] <= 0))
+
+        return df_CIs      
+        
+    @staticmethod
+    def add_nsd(df_CIs):
+
+        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):            
+            pos = df_CIs.columns.get_loc('cgr_moe') + 1
+            df_CIs.insert(pos, 'cgr_nsd', None) 
+            df_CIs['cgr_nsd'] = (
+                (df_CIs['cgr_ciL'] < 0.5) &
+                (df_CIs['cgr_ciH'] > 0.5))
+
+        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
+            df_CIs.insert(pos, 'bbi_C_nsd', None) 
+            df_CIs['bbi_C_nsd'] = (
+                (df_CIs['bbi_C_ciL'] < 0) &
+                (df_CIs['bbi_C_ciH'] > 0))
+
+        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
+            df_CIs.insert(pos, 'bbi_T_nsd', None) 
+            df_CIs['bbi_T_nsd'] = (
+                (df_CIs['bbi_T_ciL'] < 0) &
+                (df_CIs['bbi_T_ciH'] > 0))
+
+        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmg_moe') + 1
+            df_CIs.insert(pos, 'gmg_nsd', None) 
+            df_CIs['gmg_nsd'] = (
+                (df_CIs['gmg_ciL'] < 0) &
+                (df_CIs['gmg_ciH'] > 0))      
+
+        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
+            df_CIs.insert(pos, 'gmgc_nsd', None) 
+            df_CIs['gmgc_nsd'] = (
+                (df_CIs['gmgc_ciL'] < 0) &
+                (df_CIs['gmgc_ciH'] > 0))    
+
+        return df_CIs        
+
+    @staticmethod
+    def add_eqv(df_CIs, ropes=config.ropes):
+        
+        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):    
+            rope_cgr = ropes['cgr']        
+            pos = df_CIs.columns.get_loc('cgr_moe') + 1
+            df_CIs.insert(pos, 'cgr_eqv', None) 
+            df_CIs['cgr_eqv'] = (
+                (df_CIs['cgr_ciH'] < 0.5 + rope_cgr) &
+                (df_CIs['cgr_ciL']  > 0.5 - rope_cgr))           
+
+        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
+            rope_bbi = ropes['bbi']
+            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
+            df_CIs.insert(pos, 'bbi_C_eqv', None) 
+            df_CIs['bbi_C_eqv'] = (
+                (df_CIs['bbi_C_ciH'] < rope_bbi) &
+                (df_CIs['bbi_C_ciL']  > -rope_bbi))
+
+        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
+            rope_bbi = ropes['bbi']
+            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
+            df_CIs.insert(pos, 'bbi_T_eqv', None) 
+            df_CIs['bbi_T_eqv'] = (
+                (df_CIs['bbi_T_ciH'] < rope_bbi) &
+                (df_CIs['bbi_T_ciL']  > -rope_bbi))
+
+        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):       
+            rope_gmg = ropes['gmg']                         
+            pos = df_CIs.columns.get_loc('gmg_moe') + 1
+            df_CIs.insert(pos, 'gmg_eqv', None) 
+            df_CIs['gmg_eqv'] = (
+                (df_CIs['gmg_ciH'] < rope_gmg) &
+                (df_CIs['gmg_ciL']  > -rope_gmg))      
+
+        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):    
+            rope_gmgc = ropes['gmgc']        
+            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
+            df_CIs.insert(pos, 'gmgc_eqv', None) 
+            df_CIs['gmgc_eqv'] = (
+                (df_CIs['gmgc_ciH'] < rope_gmgc) &
+                (df_CIs['gmgc_ciL']  > -rope_gmgc))    
+
+        return df_CIs
+    
+    @staticmethod
+    def get_confusion(df_trialsData, col_guess='guess_bin', digits=4):
+        
+        total_sample = df_trialsData.shape[0]
+        confusion = {
+            'trtC_guessC': round(df_trialsData.loc[(df_trialsData.trt=='C') & (df_trialsData[f'{col_guess}']=='C')].shape[0]/total_sample, digits),
+            'trtT_guessC': round(df_trialsData.loc[(df_trialsData.trt=='T') & (df_trialsData[f'{col_guess}']=='C')].shape[0]/total_sample, digits),
+            'trtC_guessT': round(df_trialsData.loc[(df_trialsData.trt=='C') & (df_trialsData[f'{col_guess}']=='T')].shape[0]/total_sample, digits),
+            'trtT_guessT': round(df_trialsData.loc[(df_trialsData.trt=='T') & (df_trialsData[f'{col_guess}']=='T')].shape[0]/total_sample, digits),
+        }
+
+        return confusion
+
+
+    ''' Calculate CIs '''
+    @staticmethod
+    def calc_cis(df_trialData, methods=config.methods, digits=config.digits):
         ''' Calculate CI of various blinding metrics for various sample sizes '''
+
+        assert len(df_trialData.scenario.unique())==1, 'Calculating CI across mulitple scenarios'
+        assert len(df_trialData.trial.unique())==1, 'Calculating trial across mulitple scenarios'        
 
         row={}
         ### Get CGR stats
@@ -185,103 +340,9 @@ class Stats():
         
         return df_ci
 
-    @staticmethod
-    def add_eqv(df_CIs, rope_cgr, rope_bbi, rope_gmg, rope_gmgc):
-
-        if all([col in df_CIs.columns for col in ['cgr', 'cgr_ciL', 'cgr_ciH']]):            
-            pos = df_CIs.columns.get_loc('cgr_moe') + 1
-            df_CIs.insert(pos, 'cgr_eqv', None) 
-            df_CIs['cgr_eqv'] = (
-                (df_CIs['cgr_ciH'] < 0.5 + rope_cgr) &
-                (df_CIs['cgr_ciL']  > 0.5 - rope_cgr))           
-
-        if all([col in df_CIs.columns for col in ['bbi_C', 'bbi_C_ciL', 'bbi_C_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
-            df_CIs.insert(pos, 'bbi_C_eqv', None) 
-            df_CIs['bbi_C_eqv'] = (
-                (df_CIs['bbi_C_ciH'] < rope_bbi) &
-                (df_CIs['bbi_C_ciL']  > -rope_bbi))
-
-        if all([col in df_CIs.columns for col in ['bbi_T', 'bbi_T_ciL', 'bbi_T_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
-            df_CIs.insert(pos, 'bbi_T_eqv', None) 
-            df_CIs['bbi_T_eqv'] = (
-                (df_CIs['bbi_T_ciH'] < rope_bbi) &
-                (df_CIs['bbi_T_ciL']  > -rope_bbi))
-
-        if all([col in df_CIs.columns for col in ['gmg', 'gmg_ciL', 'gmg_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmg_moe') + 1
-            df_CIs.insert(pos, 'gmg_eqv', None) 
-            df_CIs['gmg_eqv'] = (
-                (df_CIs['gmg_ciH'] < rope_gmg) &
-                (df_CIs['gmg_ciL']  > -rope_gmg))      
-
-        if all([col in df_CIs.columns for col in ['gmgc', 'gmgc_ciL', 'gmgc_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
-            df_CIs.insert(pos, 'gmgc_eqv', None) 
-            df_CIs['gmgc_eqv'] = (
-                (df_CIs['gmgc_ciH'] < rope_gmgc) &
-                (df_CIs['gmgc_ciL']  > -rope_gmgc))    
-
-        return df_CIs
-    
-    @staticmethod
-    def add_nsd(df_CIs):
-
-        if all([col in df_CIs.columns for col in ['cgr', 'cgr_ciL', 'cgr_ciH']]):            
-            pos = df_CIs.columns.get_loc('cgr_moe') + 1
-            df_CIs.insert(pos, 'cgr_nsd', None) 
-            df_CIs['cgr_nsd'] = (
-                (df_CIs['cgr_ciL'] < 0.5) &
-                (df_CIs['cgr_ciH'] > 0.5))
-
-        if all([col in df_CIs.columns for col in ['bbi_C', 'bbi_C_ciL', 'bbi_C_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
-            df_CIs.insert(pos, 'bbi_C_nsd', None) 
-            df_CIs['bbi_C_nsd'] = (
-                (df_CIs['bbi_C_ciL'] < 0) &
-                (df_CIs['bbi_C_ciH'] > 0))
-
-        if all([col in df_CIs.columns for col in ['bbi_T', 'bbi_T_ciL', 'bbi_T_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
-            df_CIs.insert(pos, 'bbi_T_nsd', None) 
-            df_CIs['bbi_T_nsd'] = (
-                (df_CIs['bbi_T_ciL'] < 0) &
-                (df_CIs['bbi_T_ciH'] > 0))
-
-        if all([col in df_CIs.columns for col in ['gmg', 'gmg_ciL', 'gmg_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmg_moe') + 1
-            df_CIs.insert(pos, 'gmg_nsd', None) 
-            df_CIs['gmg_nsd'] = (
-                (df_CIs['gmg_ciL'] < 0) &
-                (df_CIs['gmg_ciH'] > 0))      
-
-        if all([col in df_CIs.columns for col in ['gmgc', 'gmgc_ciL', 'gmgc_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
-            df_CIs.insert(pos, 'gmgc_nsd', None) 
-            df_CIs['gmgc_nsd'] = (
-                (df_CIs['gmgc_ciL'] < 0) &
-                (df_CIs['gmgc_ciH'] > 0))    
-
-        return df_CIs
-
-    @staticmethod
-    def get_confusion(df_trialsData, col_guess='guess_bin', digits=4):
-        
-        total_sample = df_trialsData.shape[0]
-        confusion = {
-            'trtC_guessC': round(df_trialsData.loc[(df_trialsData.trt=='C') & (df_trialsData[f'{col_guess}']=='C')].shape[0]/total_sample, digits),
-            'trtT_guessC': round(df_trialsData.loc[(df_trialsData.trt=='T') & (df_trialsData[f'{col_guess}']=='C')].shape[0]/total_sample, digits),
-            'trtC_guessT': round(df_trialsData.loc[(df_trialsData.trt=='C') & (df_trialsData[f'{col_guess}']=='T')].shape[0]/total_sample, digits),
-            'trtT_guessT': round(df_trialsData.loc[(df_trialsData.trt=='T') & (df_trialsData[f'{col_guess}']=='T')].shape[0]/total_sample, digits),
-        }
-
-        return confusion
-
-    ''' Calculate various CIs '''
     @staticmethod ###  NEED TO GENERALIZE TO guess_bin_pop / guess_bin
     def calc_cgr_cis(df_trialData):
-        
+            
         matches = (df_trialData['trt'] == df_trialData['guess_bin']).astype(int)
         k = matches.sum()
         n = len(matches)
@@ -333,7 +394,7 @@ class Stats():
         return gmg, gmg_ciL, gmg_ciH
 
     @staticmethod
-    def calc_gmgc_cis(df_trialData):
+    def calc_gmgc_cis(df_trialData):       
 
         ### Calculate mean/SE of the dose estimate in each arm
         guess_mg_C = np.array(df_trialData.loc[(df_trialData.trt=='C')].guess_dose)
@@ -424,6 +485,86 @@ class Power():
         df_power[cols_to_round] = df_power[cols_to_round].round(digits)        
 
         return df_power
+
+    @staticmethod
+    def get_df_nnumBounds(df_trialsResults,):
+
+        scenarios = df_trialsResults.scenario.unique()
+        trials = df_trialsResults.trial.unique()
+        rows=[]
+        
+        for scenario, trial in tqdm(product(scenarios, trials), desc='Calc nnum bounds'):
+            
+            df_trialResults = df_trialsResults.loc[(df_trialsResults.scenario==scenario) & (df_trialsResults.trial==trial)]
+
+            ### Get lower bound of the nnum
+            df_trialResults = df_trialResults.sort_values(by='sample_size', ascending=False).reset_index()
+            df_sd_False = df_trialResults.loc[df_trialResults['cgr_sd']==False, 'sample_size']
+            if df_sd_False.shape[0]==0:
+                nnumL = 0
+            else:
+                nnumL = df_sd_False.iloc[0] 
+
+            ### Get upper bound of the nnum
+            df_trialResults = df_trialResults.sort_values(by='sample_size', ascending=True).reset_index()
+            df_sd_True = df_trialResults.loc[df_trialResults['cgr_sd']==True, 'sample_size']
+            if df_sd_True.shape[0]==0:
+                nnumH = math.nan
+            else:
+                nnumH = df_sd_True.iloc[0] 
+
+            rows.append({
+                'scenario': scenario,
+                'trial': trial, 
+                'nnumL': nnumL,
+                'nnumH': nnumH,})
+
+        df_nnumBounds = pd.DataFrame(rows)
+        return df_nnumBounds
+
+     @staticmethod
+    
+    @staticmethod
+    def get_df_nnum(df_trialsResults,):
+
+        scenarios = df_trialsResults.scenario.unique()
+        trials = df_trialsResults.trial.unique()
+        sample_sizes = df_trialsResults.sample_size.unique()
+        rows=[]
+        
+        for scenario, trial, sample_size in tqdm(product(scenarios, trials, sample_sizes), desc='Calc nnum'):
+            
+            df_trialResults = df_trialsResults.loc[
+                (df_trialsResults.scenario==scenario) & 
+                (df_trialsResults.trial==trial) & 
+                (df_trialsResults.sample_size==sample_size)]
+
+            ### Get lower bound of the nnum
+            df_trialResults = df_trialResults.sort_values(by='sample_size', ascending=False).reset_index()
+            df_sd_False = df_trialResults.loc[df_trialResults['cgr_sd']==False, 'sample_size']
+            if df_sd_False.shape[0]==0:
+                nnumL = 0
+            else:
+                nnumL = df_sd_False.iloc[0] 
+
+            ### Get upper bound of the nnum
+            df_trialResults = df_trialResults.sort_values(by='sample_size', ascending=True).reset_index()
+            df_sd_True = df_trialResults.loc[df_trialResults['cgr_sd']==True, 'sample_size']
+            if df_sd_True.shape[0]==0:
+                nnumH = math.nan
+            else:
+                nnumH = df_sd_True.iloc[0] 
+
+            rows.append({
+                'scenario': scenario,
+                'trial': trial, 
+                'nnumL': nnumL,
+                'nnumH': nnumH,})
+
+        df_nnumBounds = pd.DataFrame(rows)
+        return df_nnumBounds
+
+
 
 
 class Helpers():
