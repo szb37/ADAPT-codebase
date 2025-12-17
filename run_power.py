@@ -57,7 +57,7 @@ if False: ### Calc averages across scenarios / sample sizes
 ''' NNUM calc '''
 prefix='nnum'
 
-if True: ### Generate mock data
+if False: ### Generate mock data
 
     n_trials = 30
     sample_size = 300
@@ -115,7 +115,7 @@ if True: ### Generate mock data
     df_trialsData = pd.concat(df_trialsData, ignore_index=True)
     df_trialsData.to_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv'), index=False)
 
-if True: ### Calculate CIs - can take a while to run
+if False: ### Calculate CIs - can take a while to run
 
     df_CIs = power.Stats.get_df_CIs(
         df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
@@ -129,7 +129,27 @@ if True: ### Calculate CIs - can take a while to run
         df_trialsResults = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv')),)
     df_power.to_csv(os.path.join(folders.power, f'{prefix}_power.csv'), index=False)
 
-if True: 
+if True: ### Time comparison to Calculate CIs
+    import time
+
+    sample_sizes = [sample for sample in range(10, 310, 10)] #[100, 140,180, 220, 260, 300]
+
+    start = time.time()
+    df_CIs = power.Stats.get_df_CIs(
+        df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
+        sample_sizes = sample_sizes,)
+    print(f'Sequential: {time.time() - start:.2f}s')        
+    df_CIs.to_csv(os.path.join(folders.power, f'{prefix}_sequential_CIs.csv'), index=False)
+
+    start = time.time()
+    df_CIs = power.Stats.get_df_CIs_parallel(
+        df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
+        sample_sizes = sample_sizes,)
+    print(f'Parallel: {time.time() - start:.2f}s')        
+    df_CIs.to_csv(os.path.join(folders.power, f'{prefix}_parallel_CIs.csv'), index=False)
+
+
+if False: 
 
     df_nnumBounds = power.Power.get_df_nnumBounds(
        df_trialsResults = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv')),)

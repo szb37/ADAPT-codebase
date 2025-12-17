@@ -1,4 +1,5 @@
 from statsmodels.stats.proportion import proportion_confint
+from joblib import Parallel, delayed
 from rpy2.robjects import r
 from io import StringIO
 from itertools import product
@@ -132,6 +133,40 @@ class Stats():
             df_CI.insert(0, 'trial', trial) 
             df_CI.insert(0, 'scenario', scenario)             
             dfs.append(df_CI)
+
+        ### Concat CIs
+        df_CIs = pd.concat(dfs, ignore_index=True)
+        return df_CIs
+
+    @staticmethod
+    def _process_ci_task(df_trialsData, scenario, trial, sample_size, methods):
+        df_C = df_trialsData.loc[
+            (df_trialsData.scenario==scenario) & 
+            (df_trialsData.trial==trial) & 
+            (df_trialsData.trt=='C')].reset_index().iloc[0:round(sample_size/2), :]
+        df_T = df_trialsData.loc[
+            (df_trialsData.scenario==scenario) & 
+            (df_trialsData.trial==trial) & 
+            (df_trialsData.trt=='T')].reset_index().iloc[0:round(sample_size/2), :]
+        
+        df_trialData = pd.concat([df_C, df_T], ignore_index=True).reset_index(drop=True)
+        df_CI = Stats.calc_cis(df_trialData=df_trialData, methods=methods)
+        df_CI.insert(0, 'sample_size', sample_size) 
+        df_CI.insert(0, 'trial', trial) 
+        df_CI.insert(0, 'scenario', scenario)
+        return df_CI
+
+    @staticmethod
+    def get_df_CIs_parallel(df_trialsData, sample_sizes, methods=config.methods, n_jobs=-1):
+
+        scenarios = df_trialsData.scenario.unique()
+        trials = df_trialsData.trial.unique()
+        tasks = list(product(scenarios, trials, sample_sizes))
+
+        dfs = Parallel(n_jobs=n_jobs, prefer='processes')(
+            delayed(Stats._process_ci_task)(df_trialsData, scenario, trial, sample_size, methods)
+            for scenario, trial, sample_size in tqdm(tasks, desc='Calc CIs (parallel)')
+        )
 
         ### Concat CIs
         df_CIs = pd.concat(dfs, ignore_index=True)
@@ -521,8 +556,6 @@ class Power():
 
         df_nnumBounds = pd.DataFrame(rows)
         return df_nnumBounds
-
-     @staticmethod
     
     @staticmethod
     def get_df_nnum(df_trialsResults,):
