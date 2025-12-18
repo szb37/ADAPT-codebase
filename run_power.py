@@ -2,6 +2,7 @@ import src.config as config
 import src.power_calc as power
 import src.folders as folders
 import pandas as pd
+import time
 import os
 
 
@@ -57,15 +58,15 @@ if False: ### Calc averages across scenarios / sample sizes
 ''' NNUM calc '''
 prefix='nnum'
 
-if False: ### Generate mock data
+if True: ### Generate mock data
 
-    n_trials = 30
+    n_trials = 500
     sample_size = 300
     df_trialsData=[]
 
     ### CGR 0.50
     df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr050', 
+        scenario = 'cgr_0.500', 
         confusion = {
             'trtC_guessC': 0.25,
             'trtC_guessT': 0.25,
@@ -75,21 +76,45 @@ if False: ### Generate mock data
         sample_size = sample_size)
     df_trialsData.append(df_trialData)
 
-    # ### CGR 0.55
-    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-    #     scenario = 'cgr055', 
-    #     confusion = {
-    #         'trtC_guessC': 0.275,
-    #         'trtC_guessT': 0.225,
-    #         'trtT_guessC': 0.225,
-    #         'trtT_guessT': 0.275,},
-    #     n_trials = n_trials, 
-    #     sample_size = sample_size)
-    # df_trialsData.append(df_trialData)
-
-    ### CGR 0.60
+    ### CGR 0.525
     df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr060', 
+        scenario = 'cgr_0.525', 
+        confusion = {
+            'trtC_guessC': 0.2625,
+            'trtC_guessT': 0.2375,
+            'trtT_guessC': 0.2375,
+            'trtT_guessT': 0.2625,},
+        n_trials = n_trials, 
+        sample_size = sample_size)
+    df_trialsData.append(df_trialData)
+
+    ### CGR 0.55
+    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+        scenario = 'cgr_0.550', 
+        confusion = {
+            'trtC_guessC': 0.275,
+            'trtC_guessT': 0.225,
+            'trtT_guessC': 0.225,
+            'trtT_guessT': 0.275,},
+        n_trials = n_trials, 
+        sample_size = sample_size)
+    df_trialsData.append(df_trialData)
+
+    ### CGR 0.575
+    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+        scenario = 'cgr_0.575', 
+        confusion = {
+            'trtC_guessC': 0.2875,
+            'trtC_guessT': 0.2125,
+            'trtT_guessC': 0.2125,
+            'trtT_guessT': 0.2875,},
+        n_trials = n_trials, 
+        sample_size = sample_size)
+    df_trialsData.append(df_trialData)
+
+    ### CGR 0.600
+    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+        scenario = 'cgr_0.600', 
         confusion = {
             'trtC_guessC': 0.3,
             'trtC_guessT': 0.2,
@@ -99,55 +124,98 @@ if False: ### Generate mock data
         sample_size = sample_size)
     df_trialsData.append(df_trialData)
 
-    ### CGR 0.9
+    ### CGR 0.625
     df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr090', 
+        scenario = 'cgr_0.625', 
         confusion = {
-            'trtC_guessC': 0.450,
-            'trtC_guessT': 0.050,
-            'trtT_guessC': 0.050,
-            'trtT_guessT': 0.450,},
+            'trtC_guessC': 0.3125,
+            'trtC_guessT': 0.1875,
+            'trtT_guessC': 0.1875,
+            'trtT_guessT': 0.3125,}, 
         n_trials = n_trials, 
         sample_size = sample_size)
     df_trialsData.append(df_trialData)
+
+    ### CGR 0.650
+    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+        scenario = 'cgr_0.650', 
+        confusion = {
+            'trtC_guessC': 0.325,
+            'trtC_guessT': 0.175,
+            'trtT_guessC': 0.175,
+            'trtT_guessT': 0.325,}, 
+        n_trials = n_trials, 
+        sample_size = sample_size)
+    df_trialsData.append(df_trialData)
+
+    # ### CGR 0.675
+    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+    #     scenario = 'cgr_0.675', 
+    #     confusion = {
+    #         'trtC_guessC': 0.3375,
+    #         'trtC_guessT': 0.1625,
+    #         'trtT_guessC': 0.1625,
+    #         'trtT_guessT': 0.3375,}, 
+    #     n_trials = n_trials, 
+    #     sample_size = sample_size)
+    # df_trialsData.append(df_trialData)
+
+    # ### CGR 0.700
+    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+    #     scenario = 'cgr_0.700', 
+    #     confusion = {
+    #         'trtC_guessC': 0.35,
+    #         'trtC_guessT': 0.15,
+    #         'trtT_guessC': 0.15,
+    #         'trtT_guessT': 0.35,}, 
+    #     n_trials = n_trials, 
+    #     sample_size = sample_size)
+    # df_trialsData.append(df_trialData)
+
+    # ### CGR 0.750
+    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+    #     scenario = 'cgr_0.750', 
+    #     confusion = {
+    #         'trtC_guessC': 0.375,
+    #         'trtC_guessT': 0.125,
+    #         'trtT_guessC': 0.125,
+    #         'trtT_guessT': 0.375,}, 
+    #     n_trials = n_trials, 
+    #     sample_size = sample_size)
+    # df_trialsData.append(df_trialData)
+
+    # ### CGR 0.95
+    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
+    #     scenario = 'cgr095', 
+    #     confusion = {
+    #         'trtC_guessC': 0.475,
+    #         'trtC_guessT': 0.025,
+    #         'trtT_guessC': 0.025,
+    #         'trtT_guessT': 0.475,},
+    #     n_trials = n_trials, 
+    #     sample_size = sample_size)
+    # df_trialsData.append(df_trialData)
 
     ### Concatanate and save 
     df_trialsData = pd.concat(df_trialsData, ignore_index=True)
     df_trialsData.to_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv'), index=False)
 
-if False: ### Calculate CIs - can take a while to run
+if True: ### Calculate CIs - can take a while to run
 
-    df_CIs = power.Stats.get_df_CIs(
+    sample_sizes = [sample_size for sample_size in range(20, 305, 10,)]
+
+    start = time.time()
+    df_CIs = power.Stats.get_df_CIs_vectorized(
         df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
-        sample_sizes = [100, 140,180, 220, 260, 300],)        
-    df_CIs.to_csv(os.path.join(folders.power, f'{prefix}_CIs.csv'), index=False)
+        sample_sizes = sample_sizes,)
+    print(f'Calculating CIs took {time.time() - start:.2f}s')  
 
-    df_trialsResults = power.Stats.get_df_trialsResults(df_CIs = df_CIs, trim_CIs=False)
+    df_trialsResults = power.Stats.get_df_trialsResults(
+        df_CIs = df_CIs, 
+        trim_CIs=False)
+    df_trialsResults = power.Helpers.convert_res_to_numeric(df_trialsResults)
+
     df_trialsResults.to_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv'), index=False)
-
-    df_power = power.Power.get_df_power(
-        df_trialsResults = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv')),)
-    df_power.to_csv(os.path.join(folders.power, f'{prefix}_power.csv'), index=False)
-
-if True: ### Time comparison to Calculate CIs
-    import time
-
-    sample_sizes = [sample for sample in range(10, 310, 10)] #[100, 140,180, 220, 260, 300]
-
-    start = time.time()
-    df_CIs = power.Stats.get_df_CIs(
-        df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
-        sample_sizes = sample_sizes,)
-    print(f'Sequential: {time.time() - start:.2f}s')        
-    df_CIs.to_csv(os.path.join(folders.power, f'{prefix}_sequential_CIs.csv'), index=False)
-
-    start = time.time()
-    df_CIs = power.Stats.get_df_CIs_parallel(
-        df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
-        sample_sizes = sample_sizes,)
-    print(f'Parallel: {time.time() - start:.2f}s')        
-    df_CIs.to_csv(os.path.join(folders.power, f'{prefix}_parallel_CIs.csv'), index=False)
-
 
 if False: 
 

@@ -5,17 +5,32 @@ import numpy as np
 
 path_szb_commons = 'C:/Users/szb37/My Drive/Work efforts/szb_commons/'
 
+''' General configs '''
 ### Graphics settings
 save_PNG = True
 save_SVG = False
 plt.rcParams.update({'font.family': 'arial'})
-title_fontdict = {'fontsize': 16, 'fontweight': 'bold'}
-axislabel_fontdict = {'fontsize': 12, 'fontweight': 'bold'}
-ticklabel_fontsize = 14
+plt.rcParams['figure.dpi'] = 300 # Set display DPI
 sns.set_style("darkgrid")
+
+### Use these settings when saving plot as image
+title = {'fontsize': 16, 'fontweight': 'bold'}
+axislabel = {'fontsize': 12, 'fontweight': 'bold'}
+ticklabel = 14
+
+### Use these settings when displaying image in notebook
+nb_title = {'fontsize': 8, 'fontweight': 'bold'}
+nb_axislabel = {'fontsize': 4, 'fontweight': 'bold'}
+nb_ticklabel = 4
+nb_legendtitle = {'size': 4, 'weight': 'bold'}
+nb_legend = 4
+
+### Errorbar settings
 errorbar='sd'
 err_kws={'capsize': 3, 'elinewidth': 0.65,'capthick': 0.65}
 
+
+''' Project specific configs '''
 ### Misc configs
 digits=3 # Number of digits round CIs to
 #methods=['cgr', 'bbi', 'gmg', 'gmgc']

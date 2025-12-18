@@ -1,6 +1,6 @@
 from statsmodels.stats.proportion import proportion_confint
+from scipy.stats import beta as beta_dist
 from joblib import Parallel, delayed
-from rpy2.robjects import r
 from io import StringIO
 from itertools import product
 from tqdm import tqdm
@@ -8,7 +8,10 @@ import src.config as config
 import pandas as pd
 import numpy as np
 import math
-r('library(BI)')
+
+if 'bbi' in config.methods:
+    from rpy2.robjects import r
+    r('library(BI)')
 
 
 class DataGeneration():
@@ -136,42 +139,58 @@ class Stats():
 
         ### Concat CIs
         df_CIs = pd.concat(dfs, ignore_index=True)
+        df_CIs = df_CIs.sort_values(by=['scenario', 'trial', 'sample_size',], ascending=True, ignore_index=True)
         return df_CIs
 
-    @staticmethod
-    def _process_ci_task(df_trialsData, scenario, trial, sample_size, methods):
-        df_C = df_trialsData.loc[
-            (df_trialsData.scenario==scenario) & 
-            (df_trialsData.trial==trial) & 
-            (df_trialsData.trt=='C')].reset_index().iloc[0:round(sample_size/2), :]
-        df_T = df_trialsData.loc[
-            (df_trialsData.scenario==scenario) & 
-            (df_trialsData.trial==trial) & 
-            (df_trialsData.trt=='T')].reset_index().iloc[0:round(sample_size/2), :]
+    @staticmethod ### Only works for CGR
+    def get_df_CIs_vectorized(df_trialsData, sample_sizes, digits=config.digits):
+        """Vectorized CGR CI calculation - much faster than loop-based approaches"""
         
-        df_trialData = pd.concat([df_C, df_T], ignore_index=True).reset_index(drop=True)
-        df_CI = Stats.calc_cis(df_trialData=df_trialData, methods=methods)
-        df_CI.insert(0, 'sample_size', sample_size) 
-        df_CI.insert(0, 'trial', trial) 
-        df_CI.insert(0, 'scenario', scenario)
-        return df_CI
-
-    @staticmethod
-    def get_df_CIs_parallel(df_trialsData, sample_sizes, methods=config.methods, n_jobs=-1):
-
-        scenarios = df_trialsData.scenario.unique()
-        trials = df_trialsData.trial.unique()
-        tasks = list(product(scenarios, trials, sample_sizes))
-
-        dfs = Parallel(n_jobs=n_jobs, prefer='processes')(
-            delayed(Stats._process_ci_task)(df_trialsData, scenario, trial, sample_size, methods)
-            for scenario, trial, sample_size in tqdm(tasks, desc='Calc CIs (parallel)')
-        )
-
-        ### Concat CIs
-        df_CIs = pd.concat(dfs, ignore_index=True)
+        ### Add match column (trt == guess_bin)
+        df = df_trialsData.copy()
+        df['match'] = (df['trt'] == df['guess_bin']).astype(int)
+        
+        ### Add row number within each (scenario, trial, trt) group for sampling
+        df['row_num'] = df.groupby(['scenario', 'trial', 'trt']).cumcount()
+        
+        rows = []
+        for sample_size in sample_sizes:
+            n_per_arm = round(sample_size / 2)
+            
+            ### Filter to first n_per_arm rows per (scenario, trial, trt)
+            df_sample = df[df['row_num'] < n_per_arm]
+            
+            ### Group by (scenario, trial) and compute k, n
+            grouped = df_sample.groupby(['scenario', 'trial']).agg(
+                k=('match', 'sum'),
+                n=('match', 'count')
+            ).reset_index()
+            
+            grouped['sample_size'] = sample_size
+            rows.append(grouped)
+        
+        ### Combine all sample sizes
+        df_results = pd.concat(rows, ignore_index=True)
+        
+        ### Vectorized CI calculation using beta distribution
+        k = df_results['k'].values
+        n = df_results['n'].values
+        alpha = 0.05
+        
+        df_results['cgr'] = (k / n).round(digits)
+        df_results['cgr_ciL'] = beta_dist.ppf(alpha / 2, k, n - k + 1).round(digits)
+        df_results['cgr_ciH'] = beta_dist.ppf(1 - alpha / 2, k + 1, n - k).round(digits)
+        df_results['cgr_moe'] = ((df_results['cgr_ciH'] - df_results['cgr_ciL']) / 2).round(digits)
+        
+        ### Handle edge cases (k=0 or k=n)
+        df_results.loc[k==0, 'cgr_ciL'] = 0.0
+        df_results.loc[k==n, 'cgr_ciH'] = 1.0
+        
+        ### Select and order columns
+        df_CIs = df_results[['scenario', 'trial', 'sample_size', 'cgr', 'cgr_ciL', 'cgr_ciH', 'cgr_moe']]    
+        df_CIs = df_CIs.sort_values(by=['scenario', 'trial', 'sample_size',], ascending=True, ignore_index=True)
         return df_CIs
-
+        
     @staticmethod
     def get_df_trialsResults(df_CIs, trim_CIs=True):
 
@@ -596,8 +615,6 @@ class Power():
 
         df_nnumBounds = pd.DataFrame(rows)
         return df_nnumBounds
-
-
 
 
 class Helpers():
