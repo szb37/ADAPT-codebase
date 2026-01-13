@@ -1,0 +1,638 @@
+from statsmodels.stats.proportion import proportion_confint
+from scipy.stats import beta as beta_dist
+from io import StringIO
+from itertools import product, chain
+from tqdm import tqdm
+import src.config as config
+import scipy
+import pandas as pd
+import numpy as np
+import math
+
+if 'bbi' in config.methods:
+    from rpy2.robjects import r
+    r('library(BI)')
+
+
+class DataGeneration():
+
+    @staticmethod
+    def get_df_patientsData(scenario, n_trials, sample, params=[], digits=config.digits):
+
+        ### Input check
+        assert isinstance(scenario, str), f'scenario must be str, got {type(scenario).__name__}'
+        assert isinstance(n_trials, int), f'n_trials must be int, got {type(n_trials).__name__}'
+        assert isinstance(sample, int), f'sample must be int, got {type(sample).__name__}'
+        assert isinstance(params, list), f'params must be dict, got {type(params).__name__}'
+        assert isinstance(digits, int), f'digits must be int, got {type(digits).__name__}'
+
+        ### Generate trial data
+        df_patientsData = pd.DataFrame()
+        df_patientsData['scenario'] = [scenario]*n_trials*sample
+        
+        trials = [[trial]*sample for trial in range(0, n_trials, 1)]
+        trials = list(chain.from_iterable(trials))
+        df_patientsData['trial'] = trials
+
+        df_patientsData['pID'] = [pID for pID in range(0, sample, 1)]*n_trials
+        df_patientsData['trt'] = np.random.choice(['T', 'C'], size=sample*n_trials, p=[0.5, 0.5])
+
+        ### Add data for each param
+        for param in params:
+
+            assert isinstance(param, dict), f'each param must be dict, got {type(param).__name__}'
+            
+            if param['type'] == 'normal':
+                if 'col' in param.keys():
+                    col = param['col']
+                else:
+                    col = 'value'
+
+                df_patientsData = DataGeneration.add_cont_patientData(
+                    df_patientsData, 
+                    param = param['arm_params'], 
+                    col=col)
+            
+            elif param['type'] == 'binaryguess':
+                if 'col' in param.keys():
+                    col = param['col']
+                else:
+                    col = 'guess_bin'
+
+                df_patientsData = DataGeneration.add_binaryguess_patientData(
+                    df_patientsData, 
+                    param = param['arm_params'], 
+                    col = col)
+
+            else: 
+                assert False
+
+        return df_patientsData
+
+    @staticmethod
+    def add_cont_patientData(df_patientsData, param, col='value', digits=config.digits):
+
+        # param = {
+        #     'type': 'normal',
+        #     'arm_params':{
+        #         'C': {'mean': 10, 'sd': 11.2,},
+        #         'T': {'mean': 19, 'sd': 11.2,},
+        #     },
+        # }
+
+        ### Generate data for each arm 
+        for arm, arm_param in param.items():     
+            df_patientsData.loc[df_patientsData.trt==arm, col] = np.random.normal(
+                arm_param['mean'], 
+                arm_param['sd'],
+                df_patientsData.loc[df_patientsData.trt==arm].shape[0])
+
+        df_patientsData[col] = df_patientsData[col].round(digits)   
+        return df_patientsData
+
+    @staticmethod
+    def add_binaryguess_patientData(df_patientsData, param, col='guess_bin'): 
+
+        # param = {
+        #     'type': 'binaryguess',
+        #     'C': {'cgr': 0.65,}
+        #     'T': {'cgr': 0.65,}
+        # }
+ 
+        df_patientsData.loc[df_patientsData.trt=='C', col] = np.random.choice(
+            ['C', 'T'], 
+            size = df_patientsData.loc[df_patientsData.trt=='C'].shape[0],
+            p = [param['C']['cgr'], 1-param['C']['cgr'],]) 
+
+        df_patientsData.loc[df_patientsData.trt=='T', col] = np.random.choice(
+            ['T', 'C'], 
+            size = df_patientsData.loc[df_patientsData.trt=='T'].shape[0],
+            p = [param['T']['cgr'], 1-param['T']['cgr'],]) 
+
+        return df_patientsData
+
+
+class Stats():
+
+    @staticmethod
+    def get_df_trialsResults(df_CIs, trim_CIs=True):
+
+        df_trialsResults = df_CIs.copy()
+
+        ### Add trial results 
+        df_trialsResults = Stats.add_eqv(
+            df_CIs = df_trialsResults,)
+
+        df_trialsResults = Stats.add_nsd(
+            df_CIs = df_trialsResults,)
+
+        df_trialsResults = Stats.add_sd(
+            df_CIs = df_trialsResults,)
+
+        if trim_CIs:
+            rm_cols = [col for col in df_trialsResults.columns if (('_ciL' in col) | ('_ciH' in col))]
+            df_trialsResults = df_trialsResults.drop(columns=rm_cols)
+            
+        return df_trialsResults
+
+    ''' New methods '''
+    @staticmethod
+    def get_df_diffCIs(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits):
+
+        scenarios = df_patientsData.scenario.unique()
+        trials = df_patientsData.trial.unique()
+        rows=[]
+
+        for scenario, trial, sample in tqdm(product(scenarios, trials, samples), desc='Calc CIs'):
+
+            df = df_patientsData.loc[
+                (df_patientsData.scenario==scenario) & 
+                (df_patientsData.trial==trial)].iloc[0:sample, :]
+
+            assert df.shape[0] == sample
+
+            values_C = df.loc[df.trt=='C'].value
+            values_T = df.loc[df.trt=='T'].value
+
+            ttest_res = scipy.stats.ttest_ind(values_C, values_T)
+            ciL = ttest_res.confidence_interval().low
+            ciH = ttest_res.confidence_interval().high
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['sample'] = sample
+            row['ciL'] = ciL
+            row['ciH'] = ciH
+            rows.append(row)
+
+        # Housekeeping
+        df_diffCI = pd.DataFrame(rows)
+        df_diffCI['moe'] = (df_diffCI['ciH'] - df_diffCI['ciL'])/2
+        df_diffCI['ciL'] = df_diffCI['ciL'].round(digits)
+        df_diffCI['ciH'] = df_diffCI['ciH'].round(digits)
+        df_diffCI['moe'] = df_diffCI['moe'].round(digits)
+
+        df_CIs = pd.concat([df_CIs, df_diffCI], ignore_index=True)
+        return df_CIs
+
+    @staticmethod
+    def get_df_diffCIs_vector(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits, alpha=0.05):
+        df = df_patientsData.copy()
+        df['row_num'] = df.groupby(['scenario', 'trial']).cumcount()
+
+        rows = []
+        for sample in samples:
+            df_sample = df[df['row_num'] < sample]
+
+            grouped = (
+                df_sample
+                .groupby(['scenario', 'trial', 'trt'], as_index=False)['value']
+                .agg(n='count', mean='mean', var=lambda s: s.var(ddof=1))
+            )
+
+            total_n = grouped.groupby(['scenario', 'trial'], as_index=False)['n'].sum().rename(columns={'n': 'total_n'})
+            grouped = grouped.merge(total_n, on=['scenario', 'trial'], how='left')
+            grouped = grouped[grouped['total_n'] == sample]
+            grouped = grouped.drop(columns=['total_n'])
+            grouped['sample'] = sample
+            rows.append(grouped)
+
+        if len(rows) == 0:
+            return df_CIs
+
+        g = pd.concat(rows, ignore_index=True)
+
+        p = g.pivot(index=['scenario', 'trial', 'sample'], columns='trt', values=['n', 'mean', 'var'])
+
+        nC = p.get(('n', 'C'), pd.Series(index=p.index, dtype=float)).to_numpy(dtype=float)
+        nT = p.get(('n', 'T'), pd.Series(index=p.index, dtype=float)).to_numpy(dtype=float)
+        mC = p.get(('mean', 'C'), pd.Series(index=p.index, dtype=float)).to_numpy(dtype=float)
+        mT = p.get(('mean', 'T'), pd.Series(index=p.index, dtype=float)).to_numpy(dtype=float)
+        vC = p.get(('var', 'C'), pd.Series(index=p.index, dtype=float)).to_numpy(dtype=float)
+        vT = p.get(('var', 'T'), pd.Series(index=p.index, dtype=float)).to_numpy(dtype=float)
+
+        # Match scipy.stats.ttest_ind default: equal_var=True (pooled variance), two-sided CI
+        df_dof = (nC + nT - 2.0)
+        valid = np.isfinite(nC) & np.isfinite(nT) & np.isfinite(vC) & np.isfinite(vT) & (nC >= 2) & (nT >= 2) & (df_dof > 0)
+
+        ciL = np.full(df_dof.shape, np.nan, dtype=float)
+        ciH = np.full(df_dof.shape, np.nan, dtype=float)
+
+        if np.any(valid):
+            sp2 = ((nC[valid] - 1.0) * vC[valid] + (nT[valid] - 1.0) * vT[valid]) / df_dof[valid]
+            se = np.sqrt(sp2 * (1.0 / nC[valid] + 1.0 / nT[valid]))
+
+            diff = mC[valid] - mT[valid]
+            tcrit = scipy.stats.t.ppf(1.0 - alpha / 2.0, df_dof[valid])
+
+            ciL[valid] = diff - tcrit * se
+            ciH[valid] = diff + tcrit * se
+
+        df_diffCIs = p.reset_index()[['scenario', 'trial', 'sample']].assign(ciL=ciL, ciH=ciH)
+
+        # Housekeeping
+        df_diffCIs['moe'] = (df_diffCIs['ciH'] - df_diffCIs['ciL']) / 2
+        df_diffCIs['ciL'] = df_diffCIs['ciL'].round(digits)
+        df_diffCIs['ciH'] = df_diffCIs['ciH'].round(digits)
+        df_diffCIs['moe'] = df_diffCIs['moe'].round(digits)
+        df_diffCIs.columns = df_diffCIs.columns.droplevel(1)
+
+        df_CIs = pd.concat([df_CIs, df_diffCIs], ignore_index=True)
+        return df_CIs
+
+    @staticmethod
+    def get_df_cgrCIs(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits):
+
+        scenarios = df_patientsData.scenario.unique()
+        trials = df_patientsData.trial.unique()
+        rows=[]
+
+        for scenario, trial, sample in tqdm(product(scenarios, trials, samples), desc='Calc CIs'):
+
+            df = df_patientsData.loc[
+                (df_patientsData.scenario==scenario) & 
+                (df_patientsData.trial==trial)].iloc[0:sample, :]
+            
+            matches = (df['trt'] == df['guess_bin']).astype(int)
+            k = matches.sum()
+            n = len(matches)
+            cgr = k / n
+            cgr_ciL, cgr_ciH = proportion_confint(k, n, alpha=0.05, method="beta")
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['sample'] = sample
+            row['cgr'] = cgr
+            row['cgr_ciL'] = cgr_ciL
+            row['cgr_ciH'] = cgr_ciH
+            rows.append(row)
+
+        ### Housekeeping
+        df_cgr_CIs = pd.DataFrame(rows)
+        df_cgr_CIs['cgr_moe'] = (df_cgr_CIs['cgr_ciH'] - df_cgr_CIs['cgr_ciL'])/2
+        df_cgr_CIs['cgr'] = df_cgr_CIs['cgr'].round(digits)
+        df_cgr_CIs['cgr_ciH'] = df_cgr_CIs['cgr_ciH'].round(digits)
+        df_cgr_CIs['cgr_ciL'] = df_cgr_CIs['cgr_ciL'].round(digits)
+        df_cgr_CIs['cgr_moe'] = df_cgr_CIs['cgr_moe'].round(digits)
+        
+        df_CIs = pd.concat([df_CIs, df_cgr_CIs], ignore_index=True)
+        df_CIs = df_CIs.sort_values(by=['scenario', 'trial', 'sample',], ascending=True, ignore_index=True)
+
+        return df_CIs
+
+    @staticmethod
+    def get_df_cgrCIs_vector(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits):
+        """ Vectorized CGR CI calculation - much faster than loop-based approaches"""
+        
+        ### Add match column (trt == guess_bin)
+        df = df_patientsData.copy()
+        df['match'] = (df['trt'] == df['guess_bin']).astype(int)
+        
+        ### Add row number within each (scenario, trial) group for sampling
+        df['row_num'] = df.groupby(['scenario', 'trial']).cumcount()
+        
+        rows = []
+        for sample in samples:
+            ### Filter to first sample rows per (scenario, trial)
+            df_sample = df[df['row_num'] < sample]
+            
+            ### Group by (scenario, trial) and compute k, n
+            grouped = df_sample.groupby(['scenario', 'trial']).agg(
+                k=('match', 'sum'),
+                n=('match', 'count')
+            ).reset_index()
+            
+            ### Only keep groups with exactly sample rows (to match reference assert)
+            grouped = grouped[grouped['n'] == sample]
+            grouped['sample'] = sample
+            rows.append(grouped)
+        
+        if len(rows) == 0:
+            return df_CIs
+        
+        ### Combine all sample sizes
+        df_cgrCIs = pd.concat(rows, ignore_index=True)
+        
+        ### Vectorized CI calculation using beta distribution
+        k = df_cgrCIs['k'].values
+        n = df_cgrCIs['n'].values
+        alpha = 0.05
+        
+        df_cgrCIs['cgr'] = k / n
+        df_cgrCIs['cgr_ciL'] = beta_dist.ppf(alpha / 2, k, n - k + 1)
+        df_cgrCIs['cgr_ciH'] = beta_dist.ppf(1 - alpha / 2, k + 1, n - k)
+        
+        ### Handle edge cases (k=0 or k=n)
+        df_cgrCIs.loc[k==0, 'cgr_ciL'] = 0.0
+        df_cgrCIs.loc[k==n, 'cgr_ciH'] = 1.0
+        
+        ### Housekeeping
+        df_cgrCIs['cgr_moe'] = (df_cgrCIs['cgr_ciH'] - df_cgrCIs['cgr_ciL'])/2
+        df_cgrCIs['cgr'] = df_cgrCIs['cgr'].round(digits)
+        df_cgrCIs['cgr_ciH'] = df_cgrCIs['cgr_ciH'].round(digits)
+        df_cgrCIs['cgr_ciL'] = df_cgrCIs['cgr_ciL'].round(digits)
+        df_cgrCIs['cgr_moe'] = df_cgrCIs['cgr_moe'].round(digits)
+        
+        df_CIs = pd.concat([df_CIs, df_cgrCIs[['scenario', 'trial', 'sample', 'cgr', 'cgr_ciL', 'cgr_ciH', 'cgr_moe']]], ignore_index=True)
+        df_CIs = df_CIs.sort_values(by=['scenario', 'trial', 'sample',], ascending=True, ignore_index=True)
+
+        return df_CIs
+
+    ''' Decisions '''
+    @staticmethod
+    def add_sd(df_CIs):
+
+        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):            
+            pos = df_CIs.columns.get_loc('cgr_moe') + 1
+            df_CIs.insert(pos, 'cgr_sd', None) 
+            df_CIs['cgr_sd'] = (
+                (df_CIs['cgr_ciL'] >= 0.5) | (df_CIs['cgr_ciH'] <= 0.5))
+
+        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
+            df_CIs.insert(pos, 'bbi_C_sd', None) 
+            df_CIs['bbi_C_sd'] = (
+                (df_CIs['bbi_C_ciL'] >= 0) | (df_CIs['bbi_C_ciH'] <= 0))
+
+        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
+            df_CIs.insert(pos, 'bbi_T_sd', None) 
+            df_CIs['bbi_T_sd'] = (
+                (df_CIs['bbi_T_ciL'] >= 0) | (df_CIs['bbi_T_ciH'] <= 0))
+
+        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmg_moe') + 1
+            df_CIs.insert(pos, 'gmg_sd', None) 
+            df_CIs['gmg_sd'] = (
+                (df_CIs['gmg_ciL'] >= 0) | (df_CIs['gmg_ciH'] <= 0))    
+
+        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
+            df_CIs.insert(pos, 'gmgc_sd', None) 
+            df_CIs['gmgc_sd'] = (
+                (df_CIs['gmgc_ciL'] >= 0) | (df_CIs['gmgc_ciH'] <= 0))
+
+        return df_CIs      
+        
+    @staticmethod
+    def add_nsd(df_CIs):
+
+        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):            
+            pos = df_CIs.columns.get_loc('cgr_moe') + 1
+            df_CIs.insert(pos, 'cgr_nsd', None) 
+            df_CIs['cgr_nsd'] = (
+                (df_CIs['cgr_ciL'] < 0.5) &
+                (df_CIs['cgr_ciH'] > 0.5))
+
+        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
+            df_CIs.insert(pos, 'bbi_C_nsd', None) 
+            df_CIs['bbi_C_nsd'] = (
+                (df_CIs['bbi_C_ciL'] < 0) &
+                (df_CIs['bbi_C_ciH'] > 0))
+
+        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
+            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
+            df_CIs.insert(pos, 'bbi_T_nsd', None) 
+            df_CIs['bbi_T_nsd'] = (
+                (df_CIs['bbi_T_ciL'] < 0) &
+                (df_CIs['bbi_T_ciH'] > 0))
+
+        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmg_moe') + 1
+            df_CIs.insert(pos, 'gmg_nsd', None) 
+            df_CIs['gmg_nsd'] = (
+                (df_CIs['gmg_ciL'] < 0) &
+                (df_CIs['gmg_ciH'] > 0))      
+
+        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):            
+            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
+            df_CIs.insert(pos, 'gmgc_nsd', None) 
+            df_CIs['gmgc_nsd'] = (
+                (df_CIs['gmgc_ciL'] < 0) &
+                (df_CIs['gmgc_ciH'] > 0))    
+
+        return df_CIs        
+
+    @staticmethod
+    def add_eqv(df_CIs, ropes=config.ropes):
+        
+        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):    
+            rope_cgr = ropes['cgr']        
+            pos = df_CIs.columns.get_loc('cgr_moe') + 1
+            df_CIs.insert(pos, 'cgr_eqv', None) 
+            df_CIs['cgr_eqv'] = (
+                (df_CIs['cgr_ciH'] < 0.5 + rope_cgr) &
+                (df_CIs['cgr_ciL']  > 0.5 - rope_cgr))           
+
+        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
+            rope_bbi = ropes['bbi']
+            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
+            df_CIs.insert(pos, 'bbi_C_eqv', None) 
+            df_CIs['bbi_C_eqv'] = (
+                (df_CIs['bbi_C_ciH'] < rope_bbi) &
+                (df_CIs['bbi_C_ciL']  > -rope_bbi))
+
+        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
+            rope_bbi = ropes['bbi']
+            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
+            df_CIs.insert(pos, 'bbi_T_eqv', None) 
+            df_CIs['bbi_T_eqv'] = (
+                (df_CIs['bbi_T_ciH'] < rope_bbi) &
+                (df_CIs['bbi_T_ciL']  > -rope_bbi))
+
+        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):       
+            rope_gmg = ropes['gmg']                         
+            pos = df_CIs.columns.get_loc('gmg_moe') + 1
+            df_CIs.insert(pos, 'gmg_eqv', None) 
+            df_CIs['gmg_eqv'] = (
+                (df_CIs['gmg_ciH'] < rope_gmg) &
+                (df_CIs['gmg_ciL']  > -rope_gmg))      
+
+        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):    
+            rope_gmgc = ropes['gmgc']        
+            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
+            df_CIs.insert(pos, 'gmgc_eqv', None) 
+            df_CIs['gmgc_eqv'] = (
+                (df_CIs['gmgc_ciH'] < rope_gmgc) &
+                (df_CIs['gmgc_ciL']  > -rope_gmgc))    
+
+        return df_CIs
+
+
+class Power():
+
+    @staticmethod
+    def get_df_power(df_trialsResults, digits=config.digits, methods=config.methods):
+
+        df_trialsResults = Helpers.convert_res_to_numeric(df_trialsResults)
+        samples = df_trialsResults.sample.unique()
+        scenarios = df_trialsResults.scenario.unique()
+        rows = []        
+
+        ### Calculate average across trials for each scenario / sample size
+        for scenario, sample in tqdm(product(scenarios, samples), desc='Calc df_power'):            
+
+            df_sample = df_trialsResults.loc[(df_trialsResults.scenario==scenario) & (df_trialsResults.sample==sample)]    
+            if df_sample.shape[0]==0:
+                continue
+
+            row={}
+            row['scenario'] = scenario
+            row['sample'] = sample
+    
+            if 'cgr' in methods:
+                row['cgr'] = df_sample.cgr.mean()
+                row['cgr_ciL'] = df_sample.cgr_ciL.mean()
+                row['cgr_ciH'] = df_sample.cgr_ciH.mean()
+                row['cgr_moe'] = (df_sample.cgr_ciH.mean()-df_sample.cgr_ciL.mean())/2
+                row['cgr_nsd'] = df_sample.cgr_nsd.mean()
+                row['cgr_eqv'] = df_sample.cgr_eqv.mean()
+            if 'bbi' in methods:
+                row['bbi_C'] = df_sample.bbi_C.mean()
+                row['bbi_C_ciL'] = df_sample.bbi_C_ciL.mean()
+                row['bbi_C_ciH'] = df_sample.bbi_C_ciH.mean()
+                row['bbi_C_moe'] = (df_sample.bbi_C_ciH.mean()-df_sample.bbi_C_ciL.mean())/2
+                row['bbi_C_nsd'] = df_sample.bbi_C_nsd.mean()
+                row['bbi_C_eqv'] = df_sample.bbi_C_eqv.mean()
+                row['bbi_T'] = df_sample.bbi_T.mean()
+                row['bbi_T_ciL'] = df_sample.bbi_T_ciL.mean()
+                row['bbi_T_ciH'] = df_sample.bbi_T_ciH.mean()
+                row['bbi_T_moe'] = (df_sample.bbi_T_ciH.mean()-df_sample.bbi_T_ciL.mean())/2
+                row['bbi_T_nsd'] = df_sample.bbi_T_nsd.mean()
+                row['bbi_T_eqv'] = df_sample.bbi_T_eqv.mean()
+            if 'gmg' in methods:
+                row['gmg'] = df_sample.gmg.mean()
+                row['gmg_ciL'] = df_sample.gmg_ciL.mean()
+                row['gmg_ciH'] = df_sample.gmg_ciH.mean()
+                row['gmg_moe'] = (df_sample.gmg_ciH.mean()-df_sample.gmg_ciL.mean())/2
+                row['gmg_nsd'] = df_sample.gmg_nsd.mean()
+                row['gmg_eqv'] = df_sample.gmg_eqv.mean()
+            if 'gmgc' in methods:
+                row['gmgc'] = df_sample.gmgc.mean()
+                row['gmgc_ciL'] = df_sample.gmgc_ciL.mean()
+                row['gmgc_ciH'] = df_sample.gmgc_ciH.mean()
+                row['gmgc_moe'] = (df_sample.gmgc_ciH.mean()-df_sample.gmgc_ciL.mean())/2
+                row['gmgc_nsd'] = df_sample.gmgc_nsd.mean()                                
+                row['gmgc_eqv'] = df_sample.gmgc_eqv.mean()       
+
+            rows.append(row)                         
+            
+        ### Turn rows into df     
+        df_power = pd.DataFrame(rows)
+
+        ### Round columns
+        cols_to_round = df_power.columns.tolist()
+        cols_to_round.remove('scenario')
+        cols_to_round.remove('sample')
+        df_power[cols_to_round] = df_power[cols_to_round].round(digits)        
+
+        return df_power
+
+
+class Helpers():
+
+    @staticmethod
+    def convert_res_to_numeric(df_trialsResults):
+
+        ### Convert EQV/NSD results to numeric 
+        if 'cgr_eqv' in df_trialsResults.columns:
+            df_trialsResults['cgr_eqv'] = df_trialsResults['cgr_eqv'].astype(int)
+
+        if 'bbi_C_eqv' in df_trialsResults.columns:
+            df_trialsResults['bbi_C_eqv'] = df_trialsResults['bbi_C_eqv'].astype(int)
+
+        if 'bbi_T_eqv' in df_trialsResults.columns:
+            df_trialsResults['bbi_T_eqv'] = df_trialsResults['bbi_T_eqv'].astype(int)
+    
+        if 'gmg_eqv' in df_trialsResults.columns:
+            df_trialsResults['gmg_eqv'] = df_trialsResults['gmg_eqv'].astype(int)
+
+        if 'gmgc_eqv' in df_trialsResults.columns:
+            df_trialsResults['gmgc_eqv'] = df_trialsResults['gmgc_eqv'].astype(int)
+
+        if 'cgr_nsd' in df_trialsResults.columns:
+            df_trialsResults['cgr_nsd'] = df_trialsResults['cgr_nsd'].astype(int)
+
+        if 'bbi_C_nsd' in df_trialsResults.columns:
+            df_trialsResults['bbi_C_nsd'] = df_trialsResults['bbi_C_nsd'].astype(int)
+
+        if 'bbi_T_nsd' in df_trialsResults.columns:
+            df_trialsResults['bbi_T_nsd'] = df_trialsResults['bbi_T_nsd'].astype(int)
+        
+        if 'gmg_nsd' in df_trialsResults.columns:
+            df_trialsResults['gmg_nsd'] = df_trialsResults['gmg_nsd'].astype(int)
+
+        if 'gmgc_nsd' in df_trialsResults.columns:
+            df_trialsResults['gmgc_nsd'] = df_trialsResults['gmgc_nsd'].astype(int)
+
+        return df_trialsResults
+
+    @staticmethod
+    def rBI2df(str_rBI): # Convert R stringvector to pandas DF
+        
+        # Strip outer quotes
+        cleaned = str_rBI.strip().strip("'")
+
+        # Skip the header line, parse data only
+        lines = cleaned.strip().split('\n')
+        data_lines = '\n'.join(lines[1:])  # skip header
+
+        # Parse data rows (whitespace-separated, first value is row name)
+        df = pd.read_csv(StringIO(data_lines), sep=r'\s+', header=None)
+
+        # Assign correct column names
+        df.columns = ['assigned', 'est', 'se', 'bbi_ciL', 'bbi_ciH']
+
+        return df        
+
+    @staticmethod
+    def get_df_weighted_gmgs(df_patientsData):    
+        scenarios = df_patientsData.scenario.unique()
+        trials = df_patientsData.trial.unique()
+        trts = df_patientsData.trt.unique()
+
+        rows=[]
+        for scenario, trial, trt in product(scenarios, trials, trts):
+
+            df_tmp = df_patientsData.loc[
+                (df_patientsData.scenario==scenario) & 
+                (df_patientsData.trial==trial) & 
+                (df_patientsData.trt==trt)]
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['trt'] = trt
+
+            x = pd.to_numeric(df_tmp['gmg'], errors='coerce').to_numpy(dtype=float)
+            w = pd.to_numeric(df_tmp['conf'], errors='coerce').to_numpy(dtype=float)
+            mu = np.average(x, weights=w)
+            
+            row['w_mean'] = mu
+            row['w_sd'] = math.sqrt(np.average((x - mu) ** 2, weights=w))
+            rows.append(row)
+
+        df_weighted_gmgs = pd.DataFrame(rows)
+
+        ### Calculate combined mean and SD for each scenario, trt - i.e. avg across trials
+        rows=[]
+        for scenario, trt in product(scenarios, trts):
+
+            df_tmp = df_weighted_gmgs.loc[
+                (df_weighted_gmgs.scenario==scenario) & 
+                (df_weighted_gmgs.trt==trt)]
+
+            row = {}
+            row['scenario'] = scenario
+            row['trt'] = trt
+            row['comb_w_mean'] = df_tmp['w_mean'].mean()
+            row['comb_w_sd'] = np.sqrt(
+                (df_tmp['w_sd']**2).sum() / df_tmp['w_sd'].shape[0])
+
+            rows.append(row)
+
+        df_combined_weighted_gmgs = pd.DataFrame(rows)
+        return df_weighted_gmgs, df_combined_weighted_gmgs

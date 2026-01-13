@@ -1,224 +1,241 @@
-import src.config as config
-import src.power_calc as power
 import src.folders as folders
+import src.power as power
+import src.config as config
+from itertools import product
 import pandas as pd
-import time
+import numpy as np
 import os
 
 
-''' Trad power calc '''
-prefix='tmp'
+if False: ### Generate mock trial data with both binary and continous trt guess
 
-if False: ### Generate mock data
+    prefix = 'mock_cgr'
+    n_trials = 10
+    sample = 10
 
-    n_trials = 5
-    sample_size = 100
-    df_trialsData=[]
+    ### Generate binary guess data
 
-    scenario = 'tmp'
-    df_trialData = power.DataGeneration.get_df_trialsData_params(
-        scenario = scenario,
-        n_trials = n_trials, 
-        sample_size = sample_size, 
-        params_cont={
-            'mean_C': 10.5, 
-            'mean_T': 10.5,        
-            'sd': 7.6, },
-        params_bin={
-            'p_unmask_C': 0.9, 
-            'p_unmask_T': 0.5,
-        },
-        confs = [7],
-        )
-    df_trialsData.append(df_trialData)
+    # Define parameters
+    scenario_params = []
+    for cgr in np.arange(0.5, 1, 0.05):
+        cgr = round(cgr, 2)
+        scenario_params.append(
+            (f'cgr_{cgr}', 
+            {'type': 'binaryguess',
+            'arm_params':{
+                'C': {'cgr': cgr,},
+                'T': {'cgr': cgr,},},}))
 
-    ### Concatanate and save 
-    df_trialsData = pd.concat(df_trialsData, ignore_index=True)
-    df_trialsData.to_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv'), index=False)
+    # Get data
+    df_patientsData=[]
+    for scenario_param in scenario_params:
 
-if False: ### Calculate CIs - can take a while to run
+        scenario = scenario_param[0]
+        params = scenario_param[1]
 
-    df_CIs = power.Stats.get_df_CIs(
-        df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
-        #sample_sizes = [160, 80, 100, 120, 140, 160, 180, 200, 240, 280, 320, 400],
-        sample_sizes = [20, 40, 60, 80, 100],)        
-    
-    df_trialsResults = power.Stats.get_df_trialsResults(
-        df_CIs = df_CIs,)
+        df_patientData = power.DataGeneration.get_df_patientsData(
+            scenario = scenario, 
+            n_trials = n_trials, 
+            sample = sample, 
+            params = [params])
+        df_patientsData.append(df_patientData)
 
-    df_trialsResults.to_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv'), index=False)
+    # Concatanate and save 
+    df_patientsData = pd.concat(df_patientsData, ignore_index=True)
+    df_patientsData.to_csv(os.path.join(folders.power, f'{prefix}_trials.csv'), index=False)
+    df_patientsData.head()
 
-if False: ### Calc averages across scenarios / sample sizes 
+if False: ### How confidence effects conf weighted approach
 
-    df_power = power.Power.get_df_power(
-        df_trialsResults = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv')),)
-    df_power.to_csv(os.path.join(folders.power, f'{prefix}_power.csv'), index=False)
+    prefix = 'mock_gmgc'
+    n_trials = 50
+    sample = 100
+
+    ### Generate binary guess data
+    # Define parameters
+    scenario_params = []
+    for conf in [1, 7]:
+        scenario_params.append(
+            (f'conf{conf}', 
+            {
+                'type': 'normal',
+                'arm_params':{
+                    'C': {'mean': 15, 'sd': 4,},
+                    'T': {'mean':  5, 'sd': 4,},                
+                },}))
+
+    # Get data
+    df_patientsData=[]
+    for scenario_param in scenario_params:
+        scenario = scenario_param[0]
+        params = scenario_param[1]
+
+        df_patientData = power.DataGeneration.get_df_patientsData(
+            scenario = scenario, 
+            n_trials = n_trials, 
+            sample = sample, 
+            params = [params])
+        df_patientsData.append(df_patientData)
+
+    # Concatanate dfs, rename, clip
+    df_patientsData = pd.concat(df_patientsData, ignore_index=True)
+    df_patientsData = df_patientsData.rename(columns={'value': 'gmg'})
+    df_patientsData['gmg'] = df_patientsData['gmg'].round(1)
+    df_patientsData['gmg'] = df_patientsData['gmg'].clip(lower=0, upper=30)
+
+    # Add confidence
+    df_patientsData.loc[df_patientsData.scenario=='conf1', 'conf'] = 1 
+    df_patientsData.loc[df_patientsData.scenario=='conf7', 'conf'] = 7 
+    df_patientsData['conf'] = df_patientsData['conf'].astype(int)
+
+    df_weighted_gmgs, df_combined_weighted_gmgs = power.Helpers.get_df_weighted_gmgs(df_patientsData)
+
+    print(df_combined_weighted_gmgs)
+
+if False: ### How confidence effects conf-to-SE approach
+
+    prefix = 'mock'
+    n_trials = 50
+    sample = 100
+
+    ### Generate binary guess data
+    # Define parameters
+    scenario_params = []
+    for conf in ['Low', 'High']:
+        scenario_params.append(
+            (f'conf{conf}', 
+            {
+                'type': 'normal',
+                'arm_params':{
+                    'C': {'mean': 15, 'sd': 4,},
+                    'T': {'mean':  5, 'sd': 4,},                
+                },}))
+
+    # Get data
+    df_patientsData=[]
+    for scenario_param in scenario_params:
+        scenario = scenario_param[0]
+        params = scenario_param[1]
+
+        df_patientData = power.DataGeneration.get_df_patientsData(
+            scenario = scenario, 
+            n_trials = n_trials, 
+            sample = sample, 
+            params = [params])
+        df_patientsData.append(df_patientData)
+
+    # Concatanate dfs, rename, clip
+    df_patientsData = pd.concat(df_patientsData, ignore_index=True)
+    df_patientsData = df_patientsData.rename(columns={'value': 'gmg'})
+    df_patientsData['gmg'] = df_patientsData['gmg'].round(1)
+    df_patientsData['gmg'] = df_patientsData['gmg'].clip(lower=0, upper=30)
+
+    # Add confidence & corresponding SEs
+    df_patientsData.loc[df_patientsData.scenario=='confLow',  'conf'] = np.random.choice([1,1,1], size=df_patientsData.loc[df_patientsData.scenario=='confLow'].shape[0]) 
+    df_patientsData.loc[df_patientsData.scenario=='confHigh', 'conf'] = np.random.choice([7,7,7], size=df_patientsData.loc[df_patientsData.scenario=='confHigh'].shape[0]) 
+    df_patientsData['gmg_se'] = df_patientsData['conf'].map(config.conf_to_se)
+
+    ### Calculate combined mean and SE for each scenario, trt - i.e. avg across trials
+    scenarios = df_patientsData.scenario.unique()
+    trts = df_patientsData.trt.unique()
+
+    rows=[]
+    for scenario, trt in product(scenarios, trts):
+
+        df_tmp = df_patientsData.loc[
+            (df_patientsData.scenario==scenario) & 
+            (df_patientsData.trt==trt)]
+
+        row = {}
+        row['scenario'] = scenario
+        row['trt'] = trt
+        row['comb_gmg'] = df_tmp['gmg'].mean()
+        comb_gmg_se = np.sqrt((df_tmp['gmg_se']**2).sum() / df_tmp['gmg_se'].shape[0])
+        row['comb_gmg_ciL'] = row['comb_gmg'] - 1.96*comb_gmg_se
+        row['comb_gmg_ciH'] = row['comb_gmg'] + 1.96*comb_gmg_se
+        row['comb_gmg_moe'] = (row['comb_gmg_ciH'] - row['comb_gmg_ciL']) / 2
+        rows.append(row)
+
+    df_combined_gmgs = pd.DataFrame(rows)
+
+    for col in ['comb_gmg', 'comb_gmg_ciL', 'comb_gmg_ciH']:
+        df_combined_gmgs[col] = df_combined_gmgs[col].clip(lower=0, upper=30)
+
+    for col in ['comb_gmg', 'comb_gmg_ciL', 'comb_gmg_ciH', 'comb_gmg_moe']:
+        df_combined_gmgs[col] = df_combined_gmgs[col].round(1)
 
 
-''' NNUM calc '''
-prefix='nnum'
+    print(df_combined_gmgs)
 
-if True: ### Generate mock data
+if True: ### How confidence effects conf-to-SE approach
 
-    n_trials = 500
-    sample_size = 300
-    df_trialsData=[]
+    prefix = 'mock'
+    n_trials = 50
+    sample = 100
 
-    ### CGR 0.50
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.500', 
-        confusion = {
-            'trtC_guessC': 0.25,
-            'trtC_guessT': 0.25,
-            'trtT_guessC': 0.25,
-            'trtT_guessT': 0.25,}, 
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+    ### Generate binary guess data
+    # Define parameters
+    scenario_params = []
+    for gmgdiff in np.arange(0, 10, 2):
+        scenario_params.append(
+            (f'gmgdiff{gmgdiff}', 
+            {
+                'type': 'normal',
+                'arm_params':{
+                    'C': {'mean': (10.5 - gmgdiff/2), 'sd': 4,},
+                    'T': {'mean': (10.5 + gmgdiff/2), 'sd': 4,},                
+                },}))
 
-    ### CGR 0.525
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.525', 
-        confusion = {
-            'trtC_guessC': 0.2625,
-            'trtC_guessT': 0.2375,
-            'trtT_guessC': 0.2375,
-            'trtT_guessT': 0.2625,},
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+    # Get data
+    df_patientsData=[]
+    for scenario_param in scenario_params:
+        scenario = scenario_param[0]
+        params = scenario_param[1]
 
-    ### CGR 0.55
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.550', 
-        confusion = {
-            'trtC_guessC': 0.275,
-            'trtC_guessT': 0.225,
-            'trtT_guessC': 0.225,
-            'trtT_guessT': 0.275,},
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+        df_patientData = power.DataGeneration.get_df_patientsData(
+            scenario = scenario, 
+            n_trials = n_trials, 
+            sample = sample, 
+            params = [params])
+        df_patientsData.append(df_patientData)
 
-    ### CGR 0.575
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.575', 
-        confusion = {
-            'trtC_guessC': 0.2875,
-            'trtC_guessT': 0.2125,
-            'trtT_guessC': 0.2125,
-            'trtT_guessT': 0.2875,},
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+    # Concatanate dfs, rename, clip
+    df_patientsData = pd.concat(df_patientsData, ignore_index=True)
+    df_patientsData = df_patientsData.rename(columns={'value': 'gmg'})
+    df_patientsData['gmg'] = df_patientsData['gmg'].round(1)
+    df_patientsData['gmg'] = df_patientsData['gmg'].clip(lower=0, upper=30)
 
-    ### CGR 0.600
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.600', 
-        confusion = {
-            'trtC_guessC': 0.3,
-            'trtC_guessT': 0.2,
-            'trtT_guessC': 0.2,
-            'trtT_guessT': 0.3,}, 
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+    # Add confidence & corresponding SEs
+    df_patientsData['conf'] = np.random.choice(config.confs, size=df_patientsData.shape[0]) 
+    df_patientsData['gmg_se'] = df_patientsData['conf'].map(config.conf_to_se)
 
-    ### CGR 0.625
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.625', 
-        confusion = {
-            'trtC_guessC': 0.3125,
-            'trtC_guessT': 0.1875,
-            'trtT_guessC': 0.1875,
-            'trtT_guessT': 0.3125,}, 
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+    ### Calculate combined mean and SE for each scenario, trt - i.e. avg across trials
+    scenarios = df_patientsData.scenario.unique()
+    trts = df_patientsData.trt.unique()
 
-    ### CGR 0.650
-    df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-        scenario = 'cgr_0.650', 
-        confusion = {
-            'trtC_guessC': 0.325,
-            'trtC_guessT': 0.175,
-            'trtT_guessC': 0.175,
-            'trtT_guessT': 0.325,}, 
-        n_trials = n_trials, 
-        sample_size = sample_size)
-    df_trialsData.append(df_trialData)
+    rows=[]
+    for scenario, trt in product(scenarios, trts):
 
-    # ### CGR 0.675
-    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-    #     scenario = 'cgr_0.675', 
-    #     confusion = {
-    #         'trtC_guessC': 0.3375,
-    #         'trtC_guessT': 0.1625,
-    #         'trtT_guessC': 0.1625,
-    #         'trtT_guessT': 0.3375,}, 
-    #     n_trials = n_trials, 
-    #     sample_size = sample_size)
-    # df_trialsData.append(df_trialData)
+        df_tmp = df_patientsData.loc[
+            (df_patientsData.scenario==scenario) & 
+            (df_patientsData.trt==trt)]
 
-    # ### CGR 0.700
-    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-    #     scenario = 'cgr_0.700', 
-    #     confusion = {
-    #         'trtC_guessC': 0.35,
-    #         'trtC_guessT': 0.15,
-    #         'trtT_guessC': 0.15,
-    #         'trtT_guessT': 0.35,}, 
-    #     n_trials = n_trials, 
-    #     sample_size = sample_size)
-    # df_trialsData.append(df_trialData)
+        row = {}
+        row['scenario'] = scenario
+        row['trt'] = trt
+        row['comb_gmg'] = df_tmp['gmg'].mean()
+        comb_gmg_se = np.sqrt((df_tmp['gmg_se']**2).sum() / df_tmp['gmg_se'].shape[0])
+        row['comb_gmg_ciL'] = row['comb_gmg'] - 1.96*comb_gmg_se
+        row['comb_gmg_ciH'] = row['comb_gmg'] + 1.96*comb_gmg_se
+        row['comb_gmg_moe'] = (row['comb_gmg_ciH'] - row['comb_gmg_ciL']) / 2
+        rows.append(row)
 
-    # ### CGR 0.750
-    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-    #     scenario = 'cgr_0.750', 
-    #     confusion = {
-    #         'trtC_guessC': 0.375,
-    #         'trtC_guessT': 0.125,
-    #         'trtT_guessC': 0.125,
-    #         'trtT_guessT': 0.375,}, 
-    #     n_trials = n_trials, 
-    #     sample_size = sample_size)
-    # df_trialsData.append(df_trialData)
+    df_combined_gmgs = pd.DataFrame(rows)
 
-    # ### CGR 0.95
-    # df_trialData = power.DataGeneration.get_df_trialsData_confusion(
-    #     scenario = 'cgr095', 
-    #     confusion = {
-    #         'trtC_guessC': 0.475,
-    #         'trtC_guessT': 0.025,
-    #         'trtT_guessC': 0.025,
-    #         'trtT_guessT': 0.475,},
-    #     n_trials = n_trials, 
-    #     sample_size = sample_size)
-    # df_trialsData.append(df_trialData)
+    for col in ['comb_gmg', 'comb_gmg_ciL', 'comb_gmg_ciH']:
+        df_combined_gmgs[col] = df_combined_gmgs[col].clip(lower=0, upper=30)
 
-    ### Concatanate and save 
-    df_trialsData = pd.concat(df_trialsData, ignore_index=True)
-    df_trialsData.to_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv'), index=False)
+    for col in ['comb_gmg', 'comb_gmg_ciL', 'comb_gmg_ciH', 'comb_gmg_moe']:
+        df_combined_gmgs[col] = df_combined_gmgs[col].round(1)
 
-if True: ### Calculate CIs - can take a while to run
-
-    sample_sizes = [sample_size for sample_size in range(20, 305, 10,)]
-
-    start = time.time()
-    df_CIs = power.Stats.get_df_CIs_vectorized(
-        df_trialsData = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsData.csv')),
-        sample_sizes = sample_sizes,)
-    print(f'Calculating CIs took {time.time() - start:.2f}s')  
-
-    df_trialsResults = power.Stats.get_df_trialsResults(
-        df_CIs = df_CIs, 
-        trim_CIs=False)
-    df_trialsResults = power.Helpers.convert_res_to_numeric(df_trialsResults)
-
-    df_trialsResults.to_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv'), index=False)
-
-if False: 
-
-    df_nnumBounds = power.Power.get_df_nnumBounds(
-       df_trialsResults = pd.read_csv(os.path.join(folders.power, f'{prefix}_trialsResults.csv')),)
-    df_nnumBounds.to_csv(os.path.join(folders.power, f'{prefix}_nnumBounds.csv'), index=False)
+    print(df_combined_gmgs)
