@@ -154,7 +154,7 @@ class Stats():
             values_C = df.loc[df.trt=='C'].value
             values_T = df.loc[df.trt=='T'].value
 
-            ttest_res = scipy.stats.ttest_ind(values_C, values_T)
+            ttest_res = scipy.stats.ttest_ind(values_T, values_C)
             ciL = ttest_res.confidence_interval().low
             ciH = ttest_res.confidence_interval().high
 
@@ -162,6 +162,7 @@ class Stats():
             row['scenario'] = scenario
             row['trial'] = trial
             row['sample'] = sample
+            row['diff'] = values_T.mean() - values_C.mean()
             row['ciL'] = ciL
             row['ciH'] = ciH
             rows.append(row)
@@ -169,6 +170,7 @@ class Stats():
         # Housekeeping
         df_diffCI = pd.DataFrame(rows)
         df_diffCI['moe'] = (df_diffCI['ciH'] - df_diffCI['ciL'])/2
+        df_diffCI['diff'] = df_diffCI['diff'].round(digits)
         df_diffCI['ciL'] = df_diffCI['ciL'].round(digits)
         df_diffCI['ciH'] = df_diffCI['ciH'].round(digits)
         df_diffCI['moe'] = df_diffCI['moe'].round(digits)
@@ -223,7 +225,7 @@ class Stats():
             sp2 = ((nC[valid] - 1.0) * vC[valid] + (nT[valid] - 1.0) * vT[valid]) / df_dof[valid]
             se = np.sqrt(sp2 * (1.0 / nC[valid] + 1.0 / nT[valid]))
 
-            diff = mC[valid] - mT[valid]
+            diff = mT[valid] - mC[valid]
             tcrit = scipy.stats.t.ppf(1.0 - alpha / 2.0, df_dof[valid])
 
             ciL[valid] = diff - tcrit * se
