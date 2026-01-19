@@ -126,7 +126,7 @@ class Stats():
         df_trialsResults = Stats.add_nsd(
             df_CIs = df_trialsResults,)
 
-        df_trialsResults = Stats.add_sd(
+        df_trialsResults = Stats.add_sigdiff(
             df_CIs = df_trialsResults,)
 
         if trim_CIs:
@@ -177,7 +177,7 @@ class Stats():
         return df_CIs
 
     @staticmethod
-    def get_df_diffCIs_vector(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits, alpha=0.05):
+    def get_df_diffCIs_vector(df_patientsData, col='value', samples=[100], df_CIs=pd.DataFrame(), digits=config.digits, alpha=0.05):
         df = df_patientsData.copy()
         df['row_num'] = df.groupby(['scenario', 'trial']).cumcount()
 
@@ -187,7 +187,7 @@ class Stats():
 
             grouped = (
                 df_sample
-                .groupby(['scenario', 'trial', 'trt'], as_index=False)['value']
+                .groupby(['scenario', 'trial', 'trt'], as_index=False)[col]
                 .agg(n='count', mean='mean', var=lambda s: s.var(ddof=1))
             )
 
@@ -229,14 +229,21 @@ class Stats():
             ciL[valid] = diff - tcrit * se
             ciH[valid] = diff + tcrit * se
 
-        df_diffCIs = p.reset_index()[['scenario', 'trial', 'sample']].assign(ciL=ciL, ciH=ciH)
+        df_diffCIs = p.reset_index()[['scenario', 'trial', 'sample']].assign(diff=diff, ciL=ciL, ciH=ciH)
 
         # Housekeeping
+        df_diffCIs.columns = df_diffCIs.columns.droplevel(1)
+
         df_diffCIs['moe'] = (df_diffCIs['ciH'] - df_diffCIs['ciL']) / 2
+        df_diffCIs['diff'] = df_diffCIs['diff'].round(digits)
         df_diffCIs['ciL'] = df_diffCIs['ciL'].round(digits)
         df_diffCIs['ciH'] = df_diffCIs['ciH'].round(digits)
         df_diffCIs['moe'] = df_diffCIs['moe'].round(digits)
-        df_diffCIs.columns = df_diffCIs.columns.droplevel(1)
+        df_diffCIs = df_diffCIs.rename(columns={
+            'diff': f'{col}_diff',
+            'ciL': f'{col}_ciL',
+            'ciH': f'{col}_ciH',
+            'moe': f'{col}_moe',})    
 
         df_CIs = pd.concat([df_CIs, df_diffCIs], ignore_index=True)
         return df_CIs
@@ -342,124 +349,53 @@ class Stats():
 
     ''' Decisions '''
     @staticmethod
-    def add_sd(df_CIs):
+    def add_sigdiff(df_CIs, thresholds={'cgr': 0.5}):
 
-        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):            
-            pos = df_CIs.columns.get_loc('cgr_moe') + 1
-            df_CIs.insert(pos, 'cgr_sd', None) 
-            df_CIs['cgr_sd'] = (
-                (df_CIs['cgr_ciL'] >= 0.5) | (df_CIs['cgr_ciH'] <= 0.5))
+        for col in Helpers.find_ci_column_labels(df_CIs):
 
-        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
-            df_CIs.insert(pos, 'bbi_C_sd', None) 
-            df_CIs['bbi_C_sd'] = (
-                (df_CIs['bbi_C_ciL'] >= 0) | (df_CIs['bbi_C_ciH'] <= 0))
+            if col in thresholds.keys():
+                thr = thresholds[col]
+            else:
+                thr=0
 
-        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
-            df_CIs.insert(pos, 'bbi_T_sd', None) 
-            df_CIs['bbi_T_sd'] = (
-                (df_CIs['bbi_T_ciL'] >= 0) | (df_CIs['bbi_T_ciH'] <= 0))
+            if f'{col}_moe' in df_CIs.columns:
+                pos = df_CIs.columns.get_loc(f'{col}_moe') + 1
+            else:
+                pos = df_CIs.columns.get_loc(f'{col}_ciH') + 1
 
-        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmg_moe') + 1
-            df_CIs.insert(pos, 'gmg_sd', None) 
-            df_CIs['gmg_sd'] = (
-                (df_CIs['gmg_ciL'] >= 0) | (df_CIs['gmg_ciH'] <= 0))    
+            df_CIs.insert(pos, f'{col}_sigdiff', None) 
+            df_CIs[f'{col}_sigdiff'] = (
+                (df_CIs[f'{col}_ciL'] > thr) | 
+                (df_CIs[f'{col}_ciH'] < thr))
 
-        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
-            df_CIs.insert(pos, 'gmgc_sd', None) 
-            df_CIs['gmgc_sd'] = (
-                (df_CIs['gmgc_ciL'] >= 0) | (df_CIs['gmgc_ciH'] <= 0))
+            df_CIs[f'{col}_sigdiff'] = df_CIs[f'{col}_sigdiff'].astype(bool)
 
         return df_CIs      
         
     @staticmethod
-    def add_nsd(df_CIs):
+    def add_nsd(df_CIs, thresholds={'cgr': 0.5}):
 
-        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):            
-            pos = df_CIs.columns.get_loc('cgr_moe') + 1
-            df_CIs.insert(pos, 'cgr_nsd', None) 
-            df_CIs['cgr_nsd'] = (
-                (df_CIs['cgr_ciL'] < 0.5) &
-                (df_CIs['cgr_ciH'] > 0.5))
 
-        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
-            df_CIs.insert(pos, 'bbi_C_nsd', None) 
-            df_CIs['bbi_C_nsd'] = (
-                (df_CIs['bbi_C_ciL'] < 0) &
-                (df_CIs['bbi_C_ciH'] > 0))
+        for col in Helpers.find_ci_column_labels(df_CIs):
 
-        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
-            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
-            df_CIs.insert(pos, 'bbi_T_nsd', None) 
-            df_CIs['bbi_T_nsd'] = (
-                (df_CIs['bbi_T_ciL'] < 0) &
-                (df_CIs['bbi_T_ciH'] > 0))
+            if col in thresholds.keys():
+                thr = thresholds[col]
+            else:
+                thr = 0
 
-        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmg_moe') + 1
-            df_CIs.insert(pos, 'gmg_nsd', None) 
-            df_CIs['gmg_nsd'] = (
-                (df_CIs['gmg_ciL'] < 0) &
-                (df_CIs['gmg_ciH'] > 0))      
+            if f'{col}_moe' in df_CIs.columns:
+                pos = df_CIs.columns.get_loc(f'{col}_moe') + 1
+            else:
+                pos = df_CIs.columns.get_loc(f'{col}_ciH') + 1
 
-        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):            
-            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
-            df_CIs.insert(pos, 'gmgc_nsd', None) 
-            df_CIs['gmgc_nsd'] = (
-                (df_CIs['gmgc_ciL'] < 0) &
-                (df_CIs['gmgc_ciH'] > 0))    
+            df_CIs.insert(pos, f'{col}_nsd', None) 
+            df_CIs[f'{col}_nsd'] = (
+                (df_CIs[f'{col}_ciL'] < thr) &
+                (df_CIs[f'{col}_ciH'] > thr))
 
-        return df_CIs        
+            df_CIs[f'{col}_nsd'] = df_CIs[f'{col}_nsd'].astype(bool)
 
-    @staticmethod
-    def add_eqv(df_CIs, ropes=config.ropes):
-        
-        if all([col in df_CIs.columns for col in ['cgr_ciL', 'cgr_ciH']]):    
-            rope_cgr = ropes['cgr']        
-            pos = df_CIs.columns.get_loc('cgr_moe') + 1
-            df_CIs.insert(pos, 'cgr_eqv', None) 
-            df_CIs['cgr_eqv'] = (
-                (df_CIs['cgr_ciH'] < 0.5 + rope_cgr) &
-                (df_CIs['cgr_ciL']  > 0.5 - rope_cgr))           
-
-        if all([col in df_CIs.columns for col in ['bbi_C_ciL', 'bbi_C_ciH']]):
-            rope_bbi = ropes['bbi']
-            pos = df_CIs.columns.get_loc('bbi_C_moe') + 1
-            df_CIs.insert(pos, 'bbi_C_eqv', None) 
-            df_CIs['bbi_C_eqv'] = (
-                (df_CIs['bbi_C_ciH'] < rope_bbi) &
-                (df_CIs['bbi_C_ciL']  > -rope_bbi))
-
-        if all([col in df_CIs.columns for col in ['bbi_T_ciL', 'bbi_T_ciH']]):
-            rope_bbi = ropes['bbi']
-            pos = df_CIs.columns.get_loc('bbi_T_moe') + 1
-            df_CIs.insert(pos, 'bbi_T_eqv', None) 
-            df_CIs['bbi_T_eqv'] = (
-                (df_CIs['bbi_T_ciH'] < rope_bbi) &
-                (df_CIs['bbi_T_ciL']  > -rope_bbi))
-
-        if all([col in df_CIs.columns for col in ['gmg_ciL', 'gmg_ciH']]):       
-            rope_gmg = ropes['gmg']                         
-            pos = df_CIs.columns.get_loc('gmg_moe') + 1
-            df_CIs.insert(pos, 'gmg_eqv', None) 
-            df_CIs['gmg_eqv'] = (
-                (df_CIs['gmg_ciH'] < rope_gmg) &
-                (df_CIs['gmg_ciL']  > -rope_gmg))      
-
-        if all([col in df_CIs.columns for col in ['gmgc_ciL', 'gmgc_ciH']]):    
-            rope_gmgc = ropes['gmgc']        
-            pos = df_CIs.columns.get_loc('gmgc_moe') + 1
-            df_CIs.insert(pos, 'gmgc_eqv', None) 
-            df_CIs['gmgc_eqv'] = (
-                (df_CIs['gmgc_ciH'] < rope_gmgc) &
-                (df_CIs['gmgc_ciL']  > -rope_gmgc))    
-
-        return df_CIs
+        return df_CIs    
 
 
 class Power():
@@ -535,42 +471,6 @@ class Power():
 class Helpers():
 
     @staticmethod
-    def convert_res_to_numeric(df_trialsResults):
-
-        ### Convert EQV/NSD results to numeric 
-        if 'cgr_eqv' in df_trialsResults.columns:
-            df_trialsResults['cgr_eqv'] = df_trialsResults['cgr_eqv'].astype(int)
-
-        if 'bbi_C_eqv' in df_trialsResults.columns:
-            df_trialsResults['bbi_C_eqv'] = df_trialsResults['bbi_C_eqv'].astype(int)
-
-        if 'bbi_T_eqv' in df_trialsResults.columns:
-            df_trialsResults['bbi_T_eqv'] = df_trialsResults['bbi_T_eqv'].astype(int)
-    
-        if 'gmg_eqv' in df_trialsResults.columns:
-            df_trialsResults['gmg_eqv'] = df_trialsResults['gmg_eqv'].astype(int)
-
-        if 'gmgc_eqv' in df_trialsResults.columns:
-            df_trialsResults['gmgc_eqv'] = df_trialsResults['gmgc_eqv'].astype(int)
-
-        if 'cgr_nsd' in df_trialsResults.columns:
-            df_trialsResults['cgr_nsd'] = df_trialsResults['cgr_nsd'].astype(int)
-
-        if 'bbi_C_nsd' in df_trialsResults.columns:
-            df_trialsResults['bbi_C_nsd'] = df_trialsResults['bbi_C_nsd'].astype(int)
-
-        if 'bbi_T_nsd' in df_trialsResults.columns:
-            df_trialsResults['bbi_T_nsd'] = df_trialsResults['bbi_T_nsd'].astype(int)
-        
-        if 'gmg_nsd' in df_trialsResults.columns:
-            df_trialsResults['gmg_nsd'] = df_trialsResults['gmg_nsd'].astype(int)
-
-        if 'gmgc_nsd' in df_trialsResults.columns:
-            df_trialsResults['gmgc_nsd'] = df_trialsResults['gmgc_nsd'].astype(int)
-
-        return df_trialsResults
-
-    @staticmethod
     def rBI2df(str_rBI): # Convert R stringvector to pandas DF
         
         # Strip outer quotes
@@ -589,50 +489,23 @@ class Helpers():
         return df        
 
     @staticmethod
-    def get_df_weighted_gmgs(df_patientsData):    
-        scenarios = df_patientsData.scenario.unique()
-        trials = df_patientsData.trial.unique()
-        trts = df_patientsData.trt.unique()
-
-        rows=[]
-        for scenario, trial, trt in product(scenarios, trials, trts):
-
-            df_tmp = df_patientsData.loc[
-                (df_patientsData.scenario==scenario) & 
-                (df_patientsData.trial==trial) & 
-                (df_patientsData.trt==trt)]
-
-            row={}
-            row['scenario'] = scenario
-            row['trial'] = trial
-            row['trt'] = trt
-
-            x = pd.to_numeric(df_tmp['gmg'], errors='coerce').to_numpy(dtype=float)
-            w = pd.to_numeric(df_tmp['conf'], errors='coerce').to_numpy(dtype=float)
-            mu = np.average(x, weights=w)
+    def find_ci_column_labels(df: pd.DataFrame) -> list[str]:
+        """
+        Find column labels that have both _ciL and _ciH columns in the DataFrame.
+        
+        Args:
+            df: pandas DataFrame to search
             
-            row['w_mean'] = mu
-            row['w_sd'] = math.sqrt(np.average((x - mu) ** 2, weights=w))
-            rows.append(row)
-
-        df_weighted_gmgs = pd.DataFrame(rows)
-
-        ### Calculate combined mean and SD for each scenario, trt - i.e. avg across trials
-        rows=[]
-        for scenario, trt in product(scenarios, trts):
-
-            df_tmp = df_weighted_gmgs.loc[
-                (df_weighted_gmgs.scenario==scenario) & 
-                (df_weighted_gmgs.trt==trt)]
-
-            row = {}
-            row['scenario'] = scenario
-            row['trt'] = trt
-            row['comb_w_mean'] = df_tmp['w_mean'].mean()
-            row['comb_w_sd'] = np.sqrt(
-                (df_tmp['w_sd']**2).sum() / df_tmp['w_sd'].shape[0])
-
-            rows.append(row)
-
-        df_combined_weighted_gmgs = pd.DataFrame(rows)
-        return df_weighted_gmgs, df_combined_weighted_gmgs
+        Returns:
+            List of label strings where both f'{label}_ciL' and f'{label}_ciH' exist
+        """
+        columns = set(df.columns)
+        labels = set()
+        
+        for col in columns:
+            if col.endswith('_ciL'):
+                label = col[:-4]  # Remove '_ciL' suffix
+                if f'{label}_ciH' in columns:
+                    labels.add(label)
+        
+        return list(labels)        
