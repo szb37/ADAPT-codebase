@@ -4,10 +4,12 @@ from io import StringIO
 from itertools import product, chain
 from tqdm import tqdm
 import src.config as config
-import scipy
+import src.folders as folders
 import pandas as pd
 import numpy as np
+import scipy
 import math
+import os
 
 if 'bbi' in config.methods:
     from rpy2.robjects import r
@@ -135,7 +137,113 @@ class Stats():
             
         return df_trialsResults
 
-    ''' New methods '''
+    @staticmethod
+    def get_df_weighted_gmgs(df_patientsData, col_value='value', col_conf='conf', digits=2):    
+        """
+        Calculate weighted mean and SD of values for each (scenario, trial, trt) combination.
+        
+        Args:
+            df_patientsData: DataFrame with columns 'scenario', 'trial', 'trt', and the value/conf columns
+            col_value: Column name containing the values to average
+            col_conf: Column name containing the weights (e.g., confidence scores)
+            digits: Number of decimal places to round results
+            
+        Returns:
+            DataFrame with columns: scenario, trial, trt, w_mean, w_sd
+        """
+        scenarios = df_patientsData.scenario.unique()
+        trials = df_patientsData.trial.unique()
+        trts = df_patientsData.trt.unique()
+
+        rows=[]
+        for scenario, trial, trt in product(scenarios, trials, trts):
+
+            df_tmp = df_patientsData.loc[
+                (df_patientsData.scenario==scenario) & 
+                (df_patientsData.trial==trial) & 
+                (df_patientsData.trt==trt)]
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['trt'] = trt
+
+            x = pd.to_numeric(df_tmp[col_value], errors='coerce').to_numpy(dtype=float)
+            w = pd.to_numeric(df_tmp[col_conf], errors='coerce').to_numpy(dtype=float)
+
+            mu = np.average(x, weights=w)            
+            row[col_value] = round(mu, digits)
+            row['sd'] = round(math.sqrt(np.average((x - mu) ** 2, weights=w)), digits)
+            row['se'] = round(row['sd']/np.sqrt(len(x)), digits)
+            row['ciL'] = round(mu - row['se'] * 1.96, digits)
+            row['ciH'] = round(mu + row['se'] * 1.96, digits)
+            row['moe'] = round(row['se'] * 1.96, digits)
+
+            rows.append(row)
+        
+        df = pd.DataFrame(rows) 
+        df = df[['scenario', 'trial', 'trt', 'gmg', 'ciL', 'ciH', 'moe']]
+        return df    
+
+    @staticmethod
+    def get_combined_cis(df_CIs: pd.DataFrame, col_value='value', col_ciL='ciL', col_ciH='ciH', col_n='n', alpha=0.05, digits=2):
+        """
+        Combine multiple CIs into a single CI as if the underlying data were pooled.
+        Assumes all CIs are t-based with known sample sizes.
+        """
+        
+        scenarios = df_CIs.scenario.unique()
+        trials = df_CIs.trial.unique()
+        trts = df_CIs.trt.unique()
+
+        rows=[]
+        for scenario, trial, trt in product(scenarios, trials, trts):
+
+            df_tmp = df_CIs.loc[
+                (df_CIs.scenario==scenario) & 
+                (df_CIs.trial==trial) & 
+                (df_CIs.trt==trt)]
+
+            ciL = df_tmp[col_ciL].to_numpy(dtype=float)
+            ciH = df_tmp[col_ciH].to_numpy(dtype=float)
+
+            # Note: we are pretending n=2, while its n=1, but otherwise the t-distribution is not defined.
+            # This is a price we pay converting guess confidence from single individuals to confidence interval. 
+            n = df_tmp[col_n].to_numpy(dtype=float) if col_n in df_tmp.columns else 2*np.ones(len(df_tmp))
+        
+            # Recover mean and SD from each CI
+            t_crits = scipy.stats.t.ppf(1 - alpha/2, df=n - 1)
+            means = (ciL + ciH) / 2
+            ses = (ciH - ciL) / (2 * t_crits)
+            sds = ses * np.sqrt(n)
+            
+            # Pooled mean
+            n_total = n.sum()
+            mean_pooled = (n * means).sum() / n_total
+            
+            # Pooled variance: combines within-group and between-group variance
+            ss_within = ((n - 1) * sds**2).sum()
+            ss_between = (n * (means - mean_pooled)**2).sum()
+            var_pooled = (ss_within + ss_between) / (n_total - 1)
+            
+            # Combined CI
+            se_pooled = np.sqrt(var_pooled / n_total)
+            t_crit = scipy.stats.t.ppf(1 - alpha/2, df=n_total - 1)
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['trt'] = trt
+            row[col_value] = float(round(mean_pooled, digits))
+            row['ciL'] = float(round(mean_pooled - t_crit * se_pooled, digits))
+            row['ciH'] = float(round(mean_pooled + t_crit * se_pooled, digits))
+            row['moe'] = float(round((row['ciH']-row['ciL'])/2, digits))
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+        
+    ''' Calc CIs '''
     @staticmethod
     def get_df_diffCIs(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits):
 
@@ -511,3 +619,47 @@ class Helpers():
                     labels.add(label)
         
         return list(labels)        
+
+    @staticmethod
+    def get_pop_data():
+        ''' Get POP data in df_patientsData format. 
+            Path to data is intentionally hard coded as it is not meant to be shared. 
+        
+        Returns:
+            df_pop: pandas DataFrame with POP data in df_patientsData format
+        '''
+
+        df_pop = pd.read_csv('C:\\Users\\szb37\\My Drive\\Projects\\POP\\codebase\\exports POP\\pop_master.csv')
+        df_pop = df_pop.loc[
+            (df_pop.measure.isin(['TRTGUESS_pt_dose', 'TRTGUESS_pt_conf'])) &
+            (df_pop.tp=='A0')]
+
+        df_pop = df_pop[['pID', 'condition', 'measure', 'score']].reset_index(drop=True)
+        df_pop = df_pop.replace({
+            'condition': {'Control': 'C', 'Treatment': 'T'},
+            'measure': {'TRTGUESS_pt_dose': 'gmg', 'TRTGUESS_pt_conf': 'conf'}})
+        df_pop = df_pop.rename(columns={'condition': 'trt'})
+
+        df_pop = df_pop.pivot(index=['pID', 'trt'], columns='measure', values='score').reset_index()
+        df_pop.columns.name = None
+
+        # Adding in columns to make it like df_patientsData
+        df_pop['scenario'] = 'POP'
+        df_pop['trial'] = 0
+
+        df_pop['gmg_se'] = df_pop['conf'].map(config.conf_to_se)
+        df_pop['gmg_sd'] = df_pop['gmg_se'] # for sample=1, SE=SD
+        df_pop['gmg_ciL'] = df_pop['gmg']-1.96*df_pop['gmg_se'] 
+        df_pop['gmg_ciH'] = df_pop['gmg']+1.96*df_pop['gmg_se']
+        df_pop = df_pop.round({'gmg': 2, 'gmg_sd': 2, 'gmg_se': 2, 'gmg_ciL': 2, 'gmg_ciH': 2,})
+        df_pop = df_pop[['scenario', 'trial', 'pID', 'trt', 'gmg', 'conf', 'gmg_se', 'gmg_ciL', 'gmg_ciH']]
+
+        return df_pop      
+
+    def save_fig(fig, fname):
+        for format in ['png', 'svg']:
+            fig.savefig(
+                fname=os.path.join(folders.powerplots, f'{fname}.{format}'),
+                bbox_inches='tight',
+                format=format,
+                dpi=300,)          

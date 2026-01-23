@@ -51,7 +51,7 @@ conf_to_se = {# np.linspace(2, 20, 7)/1.96
     4: 2.806*2, 
     5: 2.041*2, 
     6: 1.276*2, 
-    7: 0.510*2}
+    7: 0.510*2,}
 
 ### Guess confidences from POP
 confs = [7.0,
