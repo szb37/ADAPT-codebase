@@ -50,7 +50,7 @@ class DataGeneration():
                 else:
                     col = 'value'
 
-                df_patientsData = DataGeneration.add_cont_patientData(
+                df_patientsData = DataGeneration.add_normal_patientData(
                     df_patientsData, 
                     param = param['arm_params'], 
                     col=col)
@@ -61,7 +61,7 @@ class DataGeneration():
                 else:
                     col = 'guess_bin'
 
-                df_patientsData = DataGeneration.add_binaryguess_patientData(
+                df_patientsData = DataGeneration.add_binary_patientData(
                     df_patientsData, 
                     param = param['arm_params'], 
                     col = col)
@@ -72,7 +72,7 @@ class DataGeneration():
         return df_patientsData
 
     @staticmethod
-    def add_cont_patientData(df_patientsData, param, col='value', digits=config.digits):
+    def add_normal_patientData(df_patientsData, param, col='value', digits=config.digits):
 
         # param = {
         #     'type': 'normal',
@@ -93,7 +93,7 @@ class DataGeneration():
         return df_patientsData
 
     @staticmethod
-    def add_binaryguess_patientData(df_patientsData, param, col='guess_bin'): 
+    def add_binary_patientData(df_patientsData, param, col='guess_bin'): 
 
         # param = {
         #     'type': 'binaryguess',
@@ -186,7 +186,7 @@ class Stats():
         return df    
 
     @staticmethod
-    def get_combined_cis(df_CIs: pd.DataFrame, col_value='value', col_ciL='ciL', col_ciH='ciH', col_n='n', alpha=0.05, digits=2):
+    def get_df_combinedCI(df_CIs: pd.DataFrame, col_value='value', col_ciL='ciL', col_ciH='ciH', col_n='n', alpha=0.05, digits=2):
         """
         Combine multiple CIs into a single CI as if the underlying data were pooled.
         Assumes all CIs are t-based with known sample sizes.
@@ -242,7 +242,53 @@ class Stats():
             rows.append(row)
 
         return pd.DataFrame(rows)
+
+    @staticmethod
+    def get_df_differenceCI(df_CIs: pd.DataFrame, col_value='value', col_ciL='ciL', col_ciH='ciH', col_n='n', alpha=0.05, digits=2):
+        """
+        Combine multiple CIs into a single CI as if the underlying data were pooled.
+        Assumes all CIs are t-based with known sample sizes.
+        """
         
+        scenarios = df_CIs.scenario.unique()
+        trials = df_CIs.trial.unique()
+        trts = sorted(df_CIs.trt.unique())
+        assert len(trts) == 2
+
+        rows=[]
+        for scenario, trial in product(scenarios, trials):
+
+            df_tmp = df_CIs.loc[
+                (df_CIs.scenario==scenario) & 
+                (df_CIs.trial==trial)]
+
+            # Split by treatment group
+            df_C = df_tmp[df_tmp['trt'] == trts[0]]
+            df_T = df_tmp[df_tmp['trt'] == trts[1]]
+
+            mC, vC, nC = Helpers.recover_stats(df_C, col_ciL, col_ciH, col_n, alpha)
+            mT, vT, nT = Helpers.recover_stats(df_T, col_ciL, col_ciH, col_n, alpha)
+
+            # Now match ttest_ind: pooled variance across both groups, CI of difference
+            df_dof = nC + nT - 2
+            sp2 = ((nC - 1) * vC + (nT - 1) * vT) / df_dof  # pooled variance
+            se_diff = np.sqrt(sp2 * (1/nC + 1/nT))
+
+            diff = mT - mC
+            t_crit = scipy.stats.t.ppf(1 - alpha/2, df=df_dof)
+
+            row = {}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row[col_value] = float(round(diff, digits))
+            row['ciL'] = float(round(diff - t_crit * se_diff, digits))
+            row['ciH'] = float(round(diff + t_crit * se_diff, digits))
+            row['moe'] = float(round(t_crit * se_diff, digits))
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+
     ''' Calc CIs '''
     @staticmethod
     def get_df_diffCIs(df_patientsData, samples=[100], df_CIs=pd.DataFrame(), digits=config.digits):
@@ -457,6 +503,7 @@ class Stats():
 
         return df_CIs
 
+
     ''' Decisions '''
     @staticmethod
     def add_sigdiff(df_CIs, thresholds={'cgr': 0.5}):
@@ -656,6 +703,7 @@ class Helpers():
 
         return df_pop      
 
+    @staticmethod
     def save_fig(fig, fname):
         for format in ['png', 'svg']:
             fig.savefig(
@@ -663,3 +711,25 @@ class Helpers():
                 bbox_inches='tight',
                 format=format,
                 dpi=300,)          
+
+    @staticmethod
+    def recover_stats(df, col_ciL='ciL', col_ciH='ciH', col_n='n', alpha=0.05):
+        """Recover mean, variance, and n from CIs"""
+        ciL = df[col_ciL].to_numpy(dtype=float)
+        ciH = df[col_ciH].to_numpy(dtype=float)
+        n = df[col_n].to_numpy(dtype=float)
+        
+        t_crits = scipy.stats.t.ppf(1 - alpha/2, df=n - 1)
+        means = (ciL + ciH) / 2
+        ses = (ciH - ciL) / (2 * t_crits)
+        sds = ses * np.sqrt(n)
+        
+        # Pool within each group first
+        n_total = n.sum()
+        mean_pooled = (n * means).sum() / n_total
+        
+        ss_within = ((n - 1) * sds**2).sum()
+        ss_between = (n * (means - mean_pooled)**2).sum()
+        var_pooled = (ss_within + ss_between) / (n_total - 1)
+        
+        return mean_pooled, var_pooled, n_total
