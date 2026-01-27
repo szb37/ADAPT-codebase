@@ -171,13 +171,27 @@ class Stats():
             x = pd.to_numeric(df_tmp[col_value], errors='coerce').to_numpy(dtype=float)
             w = pd.to_numeric(df_tmp[col_conf], errors='coerce').to_numpy(dtype=float)
 
-            mu = np.average(x, weights=w)            
+            mu = np.average(x, weights=w)
+            var = np.average((x - mu) ** 2, weights=w)
+            sd = math.sqrt(var)            
+            n_eff = (np.sum(w) ** 2) / np.sum(w ** 2) # We have reliability weights, reflecting precision/confidence, not count (and hence not just sum of weights)
+            se = sd / math.sqrt(n_eff)
+            t_crit = scipy.stats.t.ppf(0.975, df=max(n_eff - 1, 1))
+
             row[col_value] = round(mu, digits)
-            row['sd'] = round(math.sqrt(np.average((x - mu) ** 2, weights=w)), digits)
-            row['se'] = round(row['sd']/np.sqrt(len(x)), digits)
-            row['ciL'] = round(mu - row['se'] * 1.96, digits)
-            row['ciH'] = round(mu + row['se'] * 1.96, digits)
-            row['moe'] = round(row['se'] * 1.96, digits)
+            row['sd'] = round(sd, digits)
+            row['se'] = round(se, digits)
+            row['ciL'] = round(mu - se * t_crit, digits)
+            row['ciH'] = round(mu + se * t_crit, digits)
+            row['moe'] = round(se * t_crit, digits)
+
+            # mu = np.average(x, weights=w)            
+            # row[col_value] = round(mu, digits)
+            # row['sd'] = round(math.sqrt(np.average((x - mu) ** 2, weights=w)), digits)
+            # row['se'] = round(row['sd']/np.sqrt(len(x)), digits)
+            # row['ciL'] = round(mu - row['se'] * 1.96, digits)
+            # row['ciH'] = round(mu + row['se'] * 1.96, digits)
+            # row['moe'] = round(row['se'] * 1.96, digits)
 
             rows.append(row)
         
@@ -207,18 +221,24 @@ class Stats():
             ciL = df_tmp[col_ciL].to_numpy(dtype=float)
             ciH = df_tmp[col_ciH].to_numpy(dtype=float)
 
-            # Note: we are pretending n=2, while its n=1, but otherwise the t-distribution is not defined.
-            # This is a price we pay converting guess confidence from single individuals to confidence interval. 
-            n = df_tmp[col_n].to_numpy(dtype=float) if col_n in df_tmp.columns else 2*np.ones(len(df_tmp))
-        
+
+            if col_n in df_tmp.columns:
+                n = df_tmp[col_n].to_numpy(dtype=float)
+                t_crits = scipy.stats.t.ppf(1 - alpha/2, df=n - 1) 
+            else:
+                # Note: if sample sizes are unknown, then we are pretending n=2 for all rows. 
+                # This is because in the 'guess conf-to-CI' approach, CIs are constructed for each individual, but the t-distribution is not defined for n=1.
+                # This is a price we pay converting guess confidence from single individuals to confidence interval.                 
+                n = np.ones(df_tmp.shape[0])
+                t_crits = scipy.stats.t.ppf(1 - alpha/2, df=1)
+
             # Recover mean and SD from each CI
-            t_crits = scipy.stats.t.ppf(1 - alpha/2, df=n - 1)
+            n_total = n.sum()
             means = (ciL + ciH) / 2
             ses = (ciH - ciL) / (2 * t_crits)
             sds = ses * np.sqrt(n)
             
             # Pooled mean
-            n_total = n.sum()
             mean_pooled = (n * means).sum() / n_total
             
             # Pooled variance: combines within-group and between-group variance
@@ -234,6 +254,7 @@ class Stats():
             row['scenario'] = scenario
             row['trial'] = trial
             row['trt'] = trt
+            row['n'] = n_total
             row[col_value] = float(round(mean_pooled, digits))
             row['ciL'] = float(round(mean_pooled - t_crit * se_pooled, digits))
             row['ciH'] = float(round(mean_pooled + t_crit * se_pooled, digits))
