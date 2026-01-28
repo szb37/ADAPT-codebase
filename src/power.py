@@ -27,6 +27,7 @@ class DataGeneration():
         assert isinstance(sample, int), f'sample must be int, got {type(sample).__name__}'
         assert isinstance(params, list), f'params must be dict, got {type(params).__name__}'
         assert isinstance(digits, int), f'digits must be int, got {type(digits).__name__}'
+        assert sample % 2 == 0, f'sample must be even, got {sample}'
 
         ### Generate trial data
         df_patientsData = pd.DataFrame()
@@ -35,9 +36,11 @@ class DataGeneration():
         trials = [[trial]*sample for trial in range(0, n_trials, 1)]
         trials = list(chain.from_iterable(trials))
         df_patientsData['trial'] = trials
+        trt_per_trial = ['T']*(sample//2) + ['C']*(sample//2)
+        trt = [np.random.permutation(trt_per_trial).tolist() for _ in range(n_trials)]
+        df_patientsData['trt'] = list(chain.from_iterable(trt))
 
         df_patientsData['pID'] = [pID for pID in range(0, sample, 1)]*n_trials
-        df_patientsData['trt'] = np.random.choice(['T', 'C'], size=sample*n_trials, p=[0.5, 0.5])
 
         ### Add data for each param
         for param in params:
@@ -221,7 +224,6 @@ class Stats():
             ciL = df_tmp[col_ciL].to_numpy(dtype=float)
             ciH = df_tmp[col_ciH].to_numpy(dtype=float)
 
-
             if col_n in df_tmp.columns:
                 n = df_tmp[col_n].to_numpy(dtype=float)
                 t_crits = scipy.stats.t.ppf(1 - alpha/2, df=n - 1) 
@@ -255,6 +257,64 @@ class Stats():
             row['trial'] = trial
             row['trt'] = trt
             row['n'] = n_total
+            row[col_value] = float(round(mean_pooled, digits))
+            row['ciL'] = float(round(mean_pooled - t_crit * se_pooled, digits))
+            row['ciH'] = float(round(mean_pooled + t_crit * se_pooled, digits))
+            row['moe'] = float(round((row['ciH']-row['ciL'])/2, digits))
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def get_df_combinedCI_fixed(df_CIs: pd.DataFrame, col_value='value', col_ciL='ciL', col_ciH='ciH', col_n='n', alpha=0.05, digits=2):
+        """
+        Combine multiple CIs into a single CI as if the underlying data were pooled.
+        Assumes all CIs are t-based with known sample sizes.
+        """
+        
+        scenarios = df_CIs.scenario.unique()
+        trials = df_CIs.trial.unique()
+        trts = df_CIs.trt.unique()
+
+        rows=[]
+        for scenario, trial, trt in product(scenarios, trials, trts):
+
+            df_tmp = df_CIs.loc[
+                (df_CIs.scenario==scenario) & 
+                (df_CIs.trial==trial) & 
+                (df_CIs.trt==trt)]
+
+            ciL = df_tmp[col_ciL].to_numpy(dtype=float)
+            ciH = df_tmp[col_ciH].to_numpy(dtype=float)
+
+            # Note: we are pretending n=2, while its n=1, but otherwise the t-distribution is not defined.
+            # This is a price we pay converting guess confidence from single individuals to confidence interval. 
+            n = df_tmp[col_n].to_numpy(dtype=float) if col_n in df_tmp.columns else 2*np.ones(len(df_tmp))
+        
+            # Recover mean and SD from each CI
+            t_crits = scipy.stats.t.ppf(1 - alpha/2, df=n - 1)
+            means = (ciL + ciH) / 2
+            ses = (ciH - ciL) / (2 * t_crits)
+            sds = ses * np.sqrt(n)
+            
+            # Pooled mean
+            n_total = n.sum()
+            mean_pooled = (n * means).sum() / n_total
+            
+            # Pooled variance: combines within-group and between-group variance
+            ss_within = ((n - 1) * sds**2).sum()
+            ss_between = (n * (means - mean_pooled)**2).sum()
+            var_pooled = (ss_within + ss_between) / (n_total - 1)
+            
+            # Combined CI
+            se_pooled = np.sqrt(var_pooled / n_total)
+            t_crit = scipy.stats.t.ppf(1 - alpha/2, df=n_total - 1)
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['trt'] = trt
             row[col_value] = float(round(mean_pooled, digits))
             row['ciL'] = float(round(mean_pooled - t_crit * se_pooled, digits))
             row['ciH'] = float(round(mean_pooled + t_crit * se_pooled, digits))
