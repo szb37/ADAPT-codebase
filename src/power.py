@@ -141,6 +141,62 @@ class Stats():
         return df_trialsResults
 
     @staticmethod
+    def get_df_weighted_cgr(df_patientsData, col_guess='guess', col_trt='trt', col_conf='conf', digits=3):    
+        """
+        Calculate weighted correct guess rate for each (scenario, trial, trt) combination.
+        
+        Args:
+            df_patientsData: DataFrame with columns 'scenario', 'trial', 'trt', 'guess', and the conf column
+            col_guess: Column name containing the guessed treatment
+            col_trt: Column name containing the actual treatment
+            col_conf: Column name containing the weights (e.g., confidence scores)
+            digits: Number of decimal places to round results
+            
+        Returns:
+            DataFrame with columns: scenario, trial, trt, cgr (weighted correct guess rate), se, ciL, ciH
+        """
+        scenarios = df_patientsData.scenario.unique().tolist()
+        trials = df_patientsData.trial.unique().tolist()
+        trts = df_patientsData.trt.unique().tolist() + ['all']
+
+        rows=[]
+        for scenario, trial, trt in product(scenarios, trials, trts):
+
+            if trt=='all':
+                df_tmp = df_patientsData.loc[
+                    (df_patientsData.scenario==scenario) & 
+                    (df_patientsData.trial==trial)]
+            else:
+                df_tmp = df_patientsData.loc[
+                    (df_patientsData.scenario==scenario) & 
+                    (df_patientsData.trial==trial) & 
+                    (df_patientsData.trt==trt)]
+
+            if len(df_tmp) == 0:
+                continue
+
+            match = (df_tmp[col_guess] == df_tmp[col_trt]).astype(float).to_numpy()
+            w = pd.to_numeric(df_tmp[col_conf], errors='coerce').to_numpy(dtype=float)
+            wcgr = np.average(match, weights=w) # weighted correct guess rate        
+            n_eff = (np.sum(w) ** 2) / np.sum(w ** 2) # Kish's effective sample size
+            ciL, ciH = proportion_confint(wcgr*n_eff, n_eff)    
+
+            row={}
+            row['scenario'] = scenario
+            row['trial'] = trial
+            row['trt'] = trt
+            row['wcgr'] = round(wcgr, digits)
+            row['ciL'] = round(ciL, digits)
+            row['ciH'] = round(ciH, digits)
+            row['MoE'] = round((ciH-ciL)/2, digits)
+            row['n'] = len(df_tmp)
+            row['n_eff'] = round(n_eff, digits)
+            rows.append(row)
+        
+        df = pd.DataFrame(rows) 
+        return df
+
+    @staticmethod
     def get_df_weighted_gmgs(df_patientsData, col_value='value', col_conf='conf', digits=2):    
         """
         Calculate weighted mean and SD of values for each (scenario, trial, trt) combination.
@@ -177,7 +233,11 @@ class Stats():
             mu = np.average(x, weights=w)
             var = np.average((x - mu) ** 2, weights=w)
             sd = math.sqrt(var)            
-            n_eff = (np.sum(w) ** 2) / np.sum(w ** 2) # We have reliability weights, reflecting precision/confidence, not count (and hence not just sum of weights)
+            
+            # Using here Kish's effective sample size We have reliability weights, reflecting precision/confidence, 
+            # not count (and hence not just sum of weights)
+            n_eff = (np.sum(w) ** 2) / np.sum(w ** 2) 
+            
             se = sd / math.sqrt(n_eff)
             t_crit = scipy.stats.t.ppf(0.975, df=max(n_eff - 1, 1))
 
@@ -187,15 +247,6 @@ class Stats():
             row['ciL'] = round(mu - se * t_crit, digits)
             row['ciH'] = round(mu + se * t_crit, digits)
             row['moe'] = round(se * t_crit, digits)
-
-            # mu = np.average(x, weights=w)            
-            # row[col_value] = round(mu, digits)
-            # row['sd'] = round(math.sqrt(np.average((x - mu) ** 2, weights=w)), digits)
-            # row['se'] = round(row['sd']/np.sqrt(len(x)), digits)
-            # row['ciL'] = round(mu - row['se'] * 1.96, digits)
-            # row['ciH'] = round(mu + row['se'] * 1.96, digits)
-            # row['moe'] = round(row['se'] * 1.96, digits)
-
             rows.append(row)
         
         df = pd.DataFrame(rows) 
