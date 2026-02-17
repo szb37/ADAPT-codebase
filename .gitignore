@@ -2,6 +2,8 @@
 codebase/dist/**
 codebase/data/**
 **/private/**
+exports/**/*
+!exports/**/.gitkeep
 
 ### Python gitignore from: https://github.com/github/gitignore/blob/main/R.gitignore
 # Byte-compiled / optimized / DLL files
