@@ -1,0 +1,6 @@
+trial,definition,masking_region,probability
+Sloshower,"p(CGR in CI | true CGR in [0.0, 0.4])",deception,0.0
+Sloshower,"p(CGR in CI | true CGR in [0.41, 0.6])",masked,0.065
+Sloshower,"p(CGR in CI | true CGR in [0.61, 0.8])",orange unmasked,0.533
+Sloshower,"p(CGR in CI | true CGR in [0.81, 1.0])",red unmasked,0.404
+Sloshower,"p(CGR in CI | true CGR not in [0.4, 0.6])",unmasked,0.938

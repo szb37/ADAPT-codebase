@@ -1,0 +1,6 @@
+trial,definition,masking_region,probability
+POP,"p(CGR in CI | true CGR in [0.0, 0.4])",deception,0.001
+POP,"p(CGR in CI | true CGR in [0.41, 0.6])",masked,0.052
+POP,"p(CGR in CI | true CGR in [0.61, 0.8])",orange unmasked,0.427
+POP,"p(CGR in CI | true CGR in [0.81, 1.0])",red unmasked,0.521
+POP,"p(CGR in CI | true CGR not in [0.4, 0.6])",unmasked,0.948
