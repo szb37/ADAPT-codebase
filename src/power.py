@@ -2,6 +2,8 @@ from statsmodels.stats.proportion import proportion_confint
 from scipy.stats import beta as beta_dist
 from io import StringIO
 from itertools import product, chain
+import matplotlib.pyplot as plt
+import seaborn as sns
 from tqdm import tqdm
 import src.config as config
 import src.folders as folders
@@ -116,8 +118,204 @@ class DataGeneration():
 
         return df_patientsData
 
+class BayesStats():
+    
+    @staticmethod
+    def get_df_bayes(df_patientsData, n_obs, n_match=None, target_ci=None, norm='sum',  trial_name='tmp', n_draws=config.n_draws, df_bayes=None):
+        ### get_df_bayes(): df of the prior, likelihood and posterior distributions
 
-class Stats():
+        assert isinstance (df_patientsData, pd.DataFrame)
+
+        assert norm in ['sum', 'trapz']
+        assert (isinstance(trial_name, str) or (trial_name is None))
+        assert (isinstance(df_bayes, pd.DataFrame) or (df_bayes is None))
+        assert isinstance (n_draws, int)
+        assert isinstance (n_obs, int)
+
+        # Target CI is either supplied by user or calculated from n_match and n_obs
+        if target_ci is None:
+            assert isinstance (n_match, int)
+            target_ci = proportion_confint(n_match, n_obs, method='jeffreys')
+
+        target_ciL = target_ci[0]
+        target_ciH = target_ci[1]
+
+        cgrs = df_patientsData.cgr.unique().tolist()
+        trials = df_patientsData.trial.unique().tolist()    
+
+        # Use flat prior if other prior is not supplied
+        if df_bayes is None: 
+            df_bayes = pd.DataFrame()
+            df_bayes['cgr'] = cgrs
+            df_bayes['prior'] = 1 / len(cgrs)
+
+        ### Sample from the df_patientsdata to get lklhoods
+        rows = []
+
+        if trial_name is not None:
+            loop_desc=f'Calc lklhoods for {trial_name}'
+        else:
+            loop_desc='Calc lklhoods'
+
+        for cgr in tqdm(cgrs, desc=loop_desc):
+            for trial in trials:
+                
+                df_tmp = df_patientsData.loc[
+                    (df_patientsData.cgr == cgr) & 
+                    (df_patientsData.trial == trial)]
+                
+                if len(df_tmp) == 0:
+                    continue
+                
+                if len(df_tmp) < n_obs:
+                    warnings.warn(f'Not enough data at CGR={cgr}, trial={trial} for sampling')
+                    continue
+
+
+                # Precompute match array for all rows in this group
+                match_arr = (df_tmp['trt'] == df_tmp['guess_bin']).values.astype(float)
+                n_pool = len(match_arr)
+                
+                # Generate all random indices at once: (n_draws, n_obs)
+                idx = np.random.randint(0, n_pool, size=(n_draws, n_obs))
+                
+                # Compute CGR for all n_draws at once
+                cgr_samples = match_arr[idx].mean(axis=1)
+                
+                # Count how many fall in range
+                n_inrange = ((cgr_samples >= target_ciL) & (cgr_samples <= target_ciH)).sum()
+                
+                row = {}
+                row['cgr'] = cgr
+                row['trial'] = trial
+                # This is P(sample CGR ∈ target CI | true CGR)
+                row['lklhood'] = round(n_inrange / n_draws, 4)  
+                rows.append(row)
+
+        # Calculate average liklihood across trials
+        df_likelihood = pd.DataFrame(rows)
+        df_lklhood = df_likelihood.groupby('cgr')['lklhood'].mean().reset_index()
+        df_lklhood.columns = ['cgr', 'lklhood']
+        df_bayes = df_bayes.merge(df_lklhood, on='cgr', how='inner')
+
+        # Calculate posterior: prior * likelihood, then normalize
+        df_bayes['posterior'] = df_bayes['prior'] * df_bayes['lklhood']
+
+        if norm=='sum':
+            df_bayes['posterior'] = df_bayes['posterior'] / df_bayes['posterior'].sum()
+        elif norm=='trapz':
+            auc = np.trapezoid(y=df_bayes['posterior'], x=df_bayes['cgr'])
+            df_bayes['posterior'] = df_bayes['posterior'] / auc
+
+        df_bayes['posterior_cum'] = df_bayes['posterior'].cumsum()
+
+        if trial_name is not None:
+            df_bayes.insert(0, 'trial', trial_name)
+        
+        return df_bayes
+
+    @staticmethod
+    def get_df_posterior_sum(df_bayes, cgr_ranges=config.cgr_ranges, wide=True, digits=3):
+        ### get_df_posterior_sum(): sum of the posterior in a given range
+
+        assert isinstance(df_bayes, pd.DataFrame)
+        assert isinstance(digits, int)
+
+        rows = []
+        for trial in df_bayes.trial.unique():
+            df_trial = df_bayes.loc[df_bayes.trial == trial]
+            for cgr_range in cgr_ranges:
+
+                row={}
+                row['trial'] = trial
+                row['cgr_range'] = cgr_range
+                row['posterior_sum'] = round(df_trial.loc[
+                    ((df_trial.cgr > cgr_range[0]) & (df_trial.cgr <= cgr_range[1])), 
+                    'posterior'].sum(), digits)
+                rows.append(row)
+
+        df_posterior_sum = pd.DataFrame(rows)
+
+        if wide:
+            df_posterior_sum = df_posterior_sum.pivot(
+                index='trial', 
+                columns='cgr_range', 
+                values='posterior_sum')
+            df_posterior_sum.reset_index(inplace=True)
+            df_posterior_sum.columns.name=None
+
+        return df_posterior_sum
+
+    @staticmethod
+    def get_df_mrg_llhood(df_bayes, cgr_ranges=config.cgr_ranges, wide=True, digits=3):
+        ### get_df_posterior_sum(): sum of the posterior in a given range
+
+        assert isinstance(df_bayes, pd.DataFrame)
+        assert isinstance(digits, int)
+
+        rows = []
+        for trial in df_bayes.trial.unique():
+            df_trial = df_bayes.loc[df_bayes.trial == trial]
+            for cgr_range in cgr_ranges:
+
+                mask = (df_trial.cgr > cgr_range[0]) & (df_trial.cgr <= cgr_range[1])        
+
+                row={}
+                row['trial'] = trial
+                row['cgr_range'] = cgr_range
+                row['mrg_llhood'] = round((df_trial.loc[mask, 'prior'] * df_trial.loc[mask, 'lklhood']).sum(), digits)
+                rows.append(row)
+
+        df_mrg_llhood = pd.DataFrame(rows)
+
+        if wide:
+            df_mrg_llhood = df_mrg_llhood.pivot(
+                index='trial', 
+                columns='cgr_range', 
+                values='mrg_llhood')
+            df_mrg_llhood.reset_index(inplace=True)
+            df_mrg_llhood.columns.name=None
+
+        return df_mrg_llhood
+
+    @staticmethod
+    def draw_posterior(df_bayes, cumulative=False, save=True): 
+        ### draw_posterior(): draw (cumulative) posterior distribution
+
+        assert isinstance(df_bayes, pd.DataFrame)
+        assert isinstance(cumulative, bool)
+        assert isinstance(save, bool)
+        
+        for trial in df_bayes.trial.unique():
+
+            fig, ax = plt.subplots()
+
+            if cumulative:
+                sns.lineplot(
+                    data = df_bayes.loc[(df_bayes.trial==trial)],
+                    x = 'cgr', 
+                    y = 'posterior_cum',)
+                ax.set_ylabel('Cumulative p(CGR | data)', fontsize=14, fontweight='bold')
+                fname = f'posterior_cumulative_{trial}'
+            else:
+                sns.lineplot(
+                    data = df_bayes.loc[(df_bayes.trial==trial)],
+                    x = 'cgr', 
+                    y = 'posterior',)
+                ax.set_ylabel('p(CGR | data)',fontsize=14, fontweight='bold')
+                fname = f'posterior_{trial}'
+            
+            plt.title(f'{trial} trial', fontweight='bold', fontsize=18)
+            ax.set_xlabel('CGR', fontsize=14, fontweight='bold')
+            ax.set_ylim([-0.003, 0.1])
+
+            if save:
+                Helpers.save_fig(fig, fname)
+
+            plt.show()
+
+
+class FreqStats():
 
     @staticmethod
     def get_df_trialsResults(df_CIs, trim_CIs=True):
@@ -125,13 +323,13 @@ class Stats():
         df_trialsResults = df_CIs.copy()
 
         ### Add trial results 
-        df_trialsResults = Stats.add_eqv(
+        df_trialsResults = FreqStats.add_eqv(
             df_CIs = df_trialsResults,)
 
-        df_trialsResults = Stats.add_nsd(
+        df_trialsResults = FreqStats.add_nsd(
             df_CIs = df_trialsResults,)
 
-        df_trialsResults = Stats.add_sigdiff(
+        df_trialsResults = FreqStats.add_sigdiff(
             df_CIs = df_trialsResults,)
 
         if trim_CIs:
@@ -839,7 +1037,7 @@ class Helpers():
     def save_fig(fig, fname):
         for format in ['png', 'svg']:
             fig.savefig(
-                fname=os.path.join(folders.powerplots, f'{fname}.{format}'),
+                fname=os.path.join(folders.exports, f'{fname}.{format}'),
                 bbox_inches='tight',
                 format=format,
                 dpi=300,)          

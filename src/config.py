@@ -41,6 +41,15 @@ ropes={
     'gmg':  5,
     'gmgc': 5,}
 
+### Bayesian stats
+n_draws=500
+cgr_ranges = [
+    (0.000, 0.375),
+    (0.375, 0.625),
+    (0.625, 1.000),
+]
+
+
 ### Convert dose guess confidence to SD
 thr_dose = 10.5 # if the guessed dose is >= thr_dos, then binary guess is 'T', otherwise 'C'
 doseguess_x = np.linspace(0, 30, 500)
